@@ -64,3 +64,30 @@ def identify_municipality(
         return municipality_index(state, municipalities).get(normalize_text(city))
     except (requests.RequestException, ValueError, KeyError):
         return None
+
+
+def resolve_municipality_fields(
+    city_original: str,
+    municipality_name: str,
+    state: str,
+    ibge_code: str,
+    municipalities: tuple[Municipality, ...] | None = None,
+) -> tuple[str, str, str]:
+    """Completa nome, UF e código quando há correspondência oficial exata."""
+    official_name = str(municipality_name or "").strip()
+    normalized_state = str(state or "MG").strip().upper() or "MG"
+    current_code = str(ibge_code or "").strip()
+    if current_code:
+        return official_name, normalized_state, current_code
+
+    candidate = official_name or str(city_original or "").strip()
+    if not candidate:
+        return official_name, normalized_state, current_code
+    municipality = identify_municipality(
+        candidate,
+        normalized_state,
+        municipalities,
+    )
+    if municipality is None:
+        return official_name, normalized_state, current_code
+    return municipality.name, municipality.state, municipality.ibge_code

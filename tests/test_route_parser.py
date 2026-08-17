@@ -5,7 +5,11 @@ from io import BytesIO
 from openpyxl import Workbook
 
 from services.excel_importer import analyze_workbook, build_import_snapshot
-from utils.city_normalizer import Municipality, normalize_text
+from utils.city_normalizer import (
+    Municipality,
+    normalize_text,
+    resolve_municipality_fields,
+)
 from utils.route_parser import extract_route_code
 
 
@@ -56,6 +60,38 @@ def test_parser_understands_schedule_and_route_city_blocks() -> None:
 def test_route_regex_and_accent_normalization() -> None:
     assert extract_route_code("Itaúna ( R. 040 )") == "R.40"
     assert normalize_text("PARÁ   DE MINAS") == normalize_text("Para de Minas")
+
+
+def test_missing_ibge_code_is_filled_from_official_municipality() -> None:
+    municipalities = (
+        Municipality("São Sebastião do Oeste", "MG", "3164605"),
+    )
+
+    result = resolve_municipality_fields(
+        "SÃO SEBASTIÃO DO OESTE",
+        "sao sebastiao do oeste",
+        "mg",
+        "",
+        municipalities,
+    )
+
+    assert result == ("São Sebastião do Oeste", "MG", "3164605")
+
+
+def test_ibge_code_is_not_guessed_for_a_different_name() -> None:
+    municipalities = (
+        Municipality("São Sebastião do Oeste", "MG", "3164605"),
+    )
+
+    result = resolve_municipality_fields(
+        "SÃO SEBASTIÃO OESTE",
+        "São Sebastião Oeste",
+        "MG",
+        "",
+        municipalities,
+    )
+
+    assert result == ("São Sebastião Oeste", "MG", "")
 
 
 def test_route_name_is_included_when_it_is_an_official_municipality(
