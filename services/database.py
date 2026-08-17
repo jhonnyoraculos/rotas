@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, joinedload, selectinload, sessionmaker
 from streamlit.errors import StreamlitSecretNotFoundError
@@ -396,23 +398,49 @@ def save_online_city_holidays(
                 )
             ).all()
         )
+        unique_entries: dict[tuple[date, str, str], dict] = {}
         for item in entries:
-            if (item["date"], item["name"], item["type"]) in manual_keys:
+            entry_key = (item["date"], item["name"], item["type"])
+            if entry_key in manual_keys:
                 continue
-            session.add(
-                HolidayCache(
-                    city_key=city_key,
-                    city=city,
-                    state=state,
-                    ibge_code=ibge_code,
-                    year=year,
-                    date=item["date"],
-                    holiday_name=item["name"],
-                    holiday_type=item["type"],
-                    source=item.get("source", "feriadosapi"),
-                    updated_at=now,
+            unique_entries.setdefault(entry_key, item)
+
+        rows = [
+            {
+                "city_key": city_key,
+                "city": city,
+                "state": state,
+                "ibge_code": ibge_code,
+                "year": year,
+                "date": item["date"],
+                "holiday_name": item["name"],
+                "holiday_type": item["type"],
+                "source": item.get("source", "feriadosapi"),
+                "updated_at": now,
+            }
+            for item in unique_entries.values()
+        ]
+        if rows:
+            dialect = session.get_bind().dialect.name
+            conflict_columns = [
+                "city_key",
+                "year",
+                "date",
+                "holiday_name",
+                "holiday_type",
+            ]
+            if dialect == "postgresql":
+                statement = postgresql_insert(HolidayCache).values(rows)
+                session.execute(
+                    statement.on_conflict_do_nothing(index_elements=conflict_columns)
                 )
-            )
+            elif dialect == "sqlite":
+                statement = sqlite_insert(HolidayCache).values(rows)
+                session.execute(
+                    statement.on_conflict_do_nothing(index_elements=conflict_columns)
+                )
+            else:
+                session.add_all(HolidayCache(**row) for row in rows)
         status = session.scalar(
             select(HolidaySyncStatus).where(
                 HolidaySyncStatus.city_key == city_key,
