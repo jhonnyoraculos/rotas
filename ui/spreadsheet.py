@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import html
 from datetime import date
+from functools import lru_cache
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -10,28 +13,362 @@ from utils.dates import WEEKDAY_NAMES, business_week
 
 SPREADSHEET_CSS = """
 <style>
-    .block-container {max-width: 1800px; padding-top: 1.2rem; padding-left: 1.5rem; padding-right: 1.5rem;}
-    [data-testid="stMetric"] {border: 1px solid #d0d0d0; border-radius: 0; padding: .5rem;}
-    .route-sheet {border-collapse: collapse; table-layout: fixed; width: 100%; background: white; font-family: Calibri, Arial, sans-serif; font-size: 14px;}
-    .route-sheet th, .route-sheet td {border: 1px solid #b7b7b7; padding: 7px 9px; text-align: left; vertical-align: middle; overflow-wrap: anywhere;}
-    .route-sheet th {background: #d9ead3; text-align: center; color: #202020; font-weight: 700;}
-    .route-sheet th.alert {background: #f4cccc; color: #9c0006;}
-    .route-sheet td {height: 34px; background: #fff;}
-    .route-sheet td.alert {background: #f4cccc; color: #9c0006; font-weight: 700; cursor: pointer; padding: 0;}
+    :root {
+        --jr-navy: #072b58;
+        --jr-blue: #12529a;
+        --jr-sky: #52a7e8;
+        --jr-red: #c81438;
+        --jr-red-dark: #99102d;
+        --jr-ink: #10243e;
+        --jr-muted: #607089;
+        --jr-glass: rgba(255, 255, 255, .68);
+        --jr-border: rgba(255, 255, 255, .78);
+        --jr-shadow: 0 18px 50px rgba(7, 43, 88, .12);
+    }
+    html {scroll-behavior: smooth;}
+    [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at 8% -5%, rgba(82, 167, 232, .24), transparent 30%),
+            radial-gradient(circle at 94% 7%, rgba(200, 20, 56, .16), transparent 28%),
+            linear-gradient(145deg, #edf4fb 0%, #f9fbfe 48%, #eef3f9 100%);
+        background-attachment: fixed;
+    }
+    [data-testid="stHeader"] {
+        background: rgba(244, 248, 253, .62);
+        backdrop-filter: blur(18px) saturate(150%);
+        border-bottom: 1px solid rgba(255, 255, 255, .65);
+    }
+    [data-testid="stMainBlockContainer"], .block-container {
+        max-width: 1800px;
+        padding-top: 1.3rem;
+        padding-left: clamp(1rem, 2.5vw, 2.5rem);
+        padding-right: clamp(1rem, 2.5vw, 2.5rem);
+        padding-bottom: 3rem;
+    }
+    section[data-testid="stSidebar"] {
+        background:
+            radial-gradient(circle at 0 0, rgba(82, 167, 232, .30), transparent 32%),
+            linear-gradient(165deg, #082f61 0%, #061d3c 62%, #07172d 100%);
+        border-right: 1px solid rgba(255, 255, 255, .12);
+    }
+    section[data-testid="stSidebar"] [data-testid="stLogo"] img {
+        border-radius: 20px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, .28);
+    }
+    section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {display: none;}
+    .jr-custom-nav a {
+        display: flex;
+        align-items: center;
+        gap: .7rem;
+        border: 1px solid transparent;
+        border-radius: 14px;
+        color: rgba(255, 255, 255, .80);
+        margin: 3px 0;
+        padding: .7rem .8rem;
+        font-size: .9rem;
+        font-weight: 650;
+        text-decoration: none;
+        transition: background .22s ease, border-color .22s ease, transform .22s ease;
+    }
+    .jr-custom-nav a:hover {
+        background: rgba(255, 255, 255, .10);
+        border-color: rgba(255, 255, 255, .15);
+        color: #fff;
+        transform: translateX(3px);
+    }
+    .jr-custom-nav a.active {
+        background: linear-gradient(120deg, rgba(82, 167, 232, .28), rgba(200, 20, 56, .22));
+        border-color: rgba(255, 255, 255, .24);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, .18);
+        color: #fff;
+    }
+    .jr-nav-icon {display: inline-grid; width: 1.2rem; place-items: center; font-size: 1rem;}
+    .jr-nav-label {
+        margin: .8rem .4rem .45rem;
+        color: rgba(255, 255, 255, .48);
+        font-size: .68rem;
+        font-weight: 850;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+    }
+    .jr-sidebar-signature {
+        margin: 1.35rem .4rem 0;
+        padding-top: 1rem;
+        color: rgba(255, 255, 255, .42);
+        font-size: .69rem;
+        line-height: 1.5;
+        border-top: 1px solid rgba(255, 255, 255, .10);
+    }
+    h1, h2, h3, h4 {color: var(--jr-ink); letter-spacing: -.025em;}
+    p, label {color: #33465f;}
+    .jr-hero {
+        position: relative;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: clamp(1rem, 2vw, 1.6rem);
+        min-height: 138px;
+        margin: .3rem 0 1.3rem;
+        padding: clamp(1.15rem, 2.4vw, 1.8rem);
+        overflow: hidden;
+        color: #fff;
+        background:
+            linear-gradient(125deg, rgba(5, 35, 73, .96), rgba(13, 72, 137, .89) 64%, rgba(162, 18, 51, .88));
+        border: 1px solid rgba(255, 255, 255, .30);
+        border-radius: 28px;
+        box-shadow: 0 24px 65px rgba(7, 43, 88, .24), inset 0 1px 0 rgba(255, 255, 255, .20);
+        backdrop-filter: blur(24px) saturate(145%);
+        animation: jr-rise .55s cubic-bezier(.2, .8, .2, 1) both;
+    }
+    .jr-hero::before {
+        content: "";
+        position: absolute;
+        width: 330px;
+        height: 330px;
+        right: -90px;
+        top: -205px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 68%);
+        animation: jr-float 9s ease-in-out infinite alternate;
+        pointer-events: none;
+    }
+    .jr-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(105deg, transparent 22%, rgba(255, 255, 255, .10) 43%, transparent 61%);
+        transform: translateX(-110%);
+        animation: jr-shine 8s ease-in-out infinite;
+        pointer-events: none;
+    }
+    .jr-logo-shell {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        width: 86px;
+        height: 86px;
+        border-radius: 25px;
+        background: rgba(255, 255, 255, .15);
+        border: 1px solid rgba(255, 255, 255, .34);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 15px 35px rgba(0, 0, 0, .20);
+        backdrop-filter: blur(15px);
+    }
+    .jr-logo-shell img {width: 68px; height: 68px; border-radius: 16px;}
+    .jr-hero-copy {position: relative; z-index: 1;}
+    .jr-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: .45rem;
+        margin-bottom: .35rem;
+        color: rgba(255, 255, 255, .74);
+        font-size: .73rem;
+        font-weight: 800;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+    }
+    .jr-eyebrow::before {content: ""; width: 22px; height: 2px; background: #ff5473; border-radius: 2px;}
+    .jr-hero h1 {margin: 0; color: #fff; font-size: clamp(1.65rem, 3.1vw, 2.65rem); line-height: 1.04; letter-spacing: -.045em;}
+    .jr-hero p {margin: .55rem 0 0; color: rgba(255, 255, 255, .76); font-size: clamp(.88rem, 1.2vw, 1rem);}
+    .jr-status-pill {
+        position: relative;
+        z-index: 1;
+        display: inline-flex;
+        align-items: center;
+        gap: .55rem;
+        padding: .65rem .85rem;
+        color: rgba(255, 255, 255, .88);
+        font-size: .78rem;
+        font-weight: 700;
+        white-space: nowrap;
+        border: 1px solid rgba(255, 255, 255, .22);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, .10);
+        backdrop-filter: blur(12px);
+    }
+    .jr-status-dot {width: 8px; height: 8px; border-radius: 50%; background: #79efa8; box-shadow: 0 0 0 5px rgba(121, 239, 168, .13);}
+    [data-testid="stForm"], [data-testid="stMetric"], [data-testid="stExpander"] details,
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--jr-glass);
+        border: 1px solid var(--jr-border) !important;
+        border-radius: 20px !important;
+        box-shadow: var(--jr-shadow);
+        backdrop-filter: blur(20px) saturate(150%);
+    }
+    [data-testid="stForm"] {padding: 1rem 1.15rem;}
+    [data-testid="stMetric"] {padding: 1rem 1.1rem; overflow: hidden; position: relative;}
+    [data-testid="stMetric"]::before {
+        content: "";
+        position: absolute;
+        width: 4px;
+        inset: 12px auto 12px 0;
+        border-radius: 0 5px 5px 0;
+        background: linear-gradient(var(--jr-blue), var(--jr-red));
+    }
+    [data-testid="stMetricValue"] {color: var(--jr-navy); font-weight: 800;}
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input, [data-baseweb="select"] > div,
+    [data-testid="stFileUploaderDropzone"] {
+        background: rgba(255, 255, 255, .70) !important;
+        border-color: rgba(18, 82, 154, .15) !important;
+        border-radius: 14px !important;
+        transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+    }
+    [data-testid="stTextInput"] input:focus, [data-testid="stNumberInput"] input:focus,
+    [data-testid="stDateInput"] input:focus {
+        border-color: rgba(18, 82, 154, .58) !important;
+        box-shadow: 0 0 0 4px rgba(18, 82, 154, .10) !important;
+        background: #fff !important;
+    }
+    .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] > button {
+        position: relative;
+        overflow: hidden;
+        min-height: 2.65rem;
+        color: var(--jr-navy);
+        font-weight: 750;
+        border: 1px solid rgba(18, 82, 154, .18);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, .70);
+        box-shadow: 0 8px 22px rgba(7, 43, 88, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
+        backdrop-filter: blur(14px);
+        transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover, [data-testid="stFormSubmitButton"] > button:hover {
+        color: var(--jr-blue);
+        border-color: rgba(18, 82, 154, .40);
+        box-shadow: 0 12px 28px rgba(7, 43, 88, .14), inset 0 1px 0 #fff;
+        transform: translateY(-2px);
+    }
+    .stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] > button[kind="primary"] {
+        color: #fff;
+        border-color: rgba(255, 255, 255, .22);
+        background: linear-gradient(120deg, var(--jr-blue), var(--jr-navy) 58%, #7f173e);
+        box-shadow: 0 12px 28px rgba(7, 43, 88, .24), inset 0 1px 0 rgba(255, 255, 255, .22);
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        gap: .45rem;
+        padding: .35rem;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, .54);
+        border: 1px solid rgba(255, 255, 255, .75);
+        backdrop-filter: blur(16px);
+    }
+    [data-testid="stTabs"] [data-baseweb="tab"] {border-radius: 12px; padding: .65rem 1rem;}
+    [data-testid="stTabs"] [aria-selected="true"] {background: rgba(18, 82, 154, .11); color: var(--jr-blue);}
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, .84);
+        border-radius: 20px;
+        box-shadow: var(--jr-shadow);
+    }
+    [data-testid="stAlert"] {
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, .72);
+        box-shadow: 0 10px 30px rgba(7, 43, 88, .08);
+        backdrop-filter: blur(14px);
+    }
+    .route-sheet-shell {
+        padding: 1rem;
+        border: 1px solid rgba(255, 255, 255, .84);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, .58);
+        box-shadow: var(--jr-shadow);
+        backdrop-filter: blur(22px) saturate(150%);
+        animation: jr-rise .5s .08s cubic-bezier(.2, .8, .2, 1) both;
+    }
+    .route-sheet-scroll {overflow-x: auto; border-radius: 17px;}
+    .route-sheet {border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 920px; width: 100%; background: rgba(255,255,255,.50); font-family: Inter, "Segoe UI", sans-serif; font-size: 13px;}
+    .route-sheet th, .route-sheet td {border-right: 1px solid rgba(7,43,88,.10); border-bottom: 1px solid rgba(7,43,88,.10); padding: 8px 10px; text-align: left; vertical-align: middle; overflow-wrap: anywhere;}
+    .route-sheet th {background: linear-gradient(145deg, #0c477f, #082f61); text-align: center; color: #fff; font-weight: 780; border-color: rgba(255,255,255,.13);}
+    .route-sheet th:first-child {border-radius: 16px 0 0 0;}
+    .route-sheet th:last-child {border-radius: 0 16px 0 0; border-right: 0;}
+    .route-sheet th.alert {background: linear-gradient(145deg, #d22147, #9b1131); color: #fff;}
+    .route-sheet td {height: 36px; background: rgba(255,255,255,.74); transition: background .18s ease;}
+    .route-sheet tr:hover td {background: rgba(235, 245, 255, .91);}
+    .route-sheet td.alert {background: linear-gradient(115deg, rgba(255,220,227,.96), rgba(255,239,242,.92)); color: #a30f30; font-weight: 760; cursor: pointer; padding: 0;}
     .route-sheet details.holiday-cell summary {display: block; color: inherit; padding: 7px 9px; list-style: none;}
     .route-sheet details.holiday-cell summary::-webkit-details-marker {display: none;}
-    .route-sheet details.holiday-cell summary:hover {background: #efb7b7;}
-    .route-sheet .holiday-inline-details {background: #fff4f4; border-top: 1px solid #d99; color: #333; font-weight: 400; padding: 8px 9px; line-height: 1.45;}
-    .route-sheet .holiday-inline-details strong {color: #9c0006;}
-    .route-sheet .holiday-inline-item + .holiday-inline-item {border-top: 1px solid #ecc; margin-top: 7px; padding-top: 7px;}
+    .route-sheet details.holiday-cell summary:hover {background: rgba(200, 20, 56, .08);}
+    .route-sheet details.holiday-cell[open] summary {background: rgba(200, 20, 56, .10);}
+    .route-sheet .holiday-inline-details {background: rgba(255,255,255,.78); border-top: 1px solid rgba(200,20,56,.25); color: #26394f; font-weight: 400; padding: 9px 10px; line-height: 1.5; animation: jr-detail .22s ease-out both;}
+    .route-sheet .holiday-inline-details strong {color: #a30f30;}
+    .route-sheet .holiday-inline-item + .holiday-inline-item {border-top: 1px solid rgba(200,20,56,.16); margin-top: 7px; padding-top: 7px;}
     .route-sheet td.empty {color: #aaa;}
-    .sheet-caption {font-family: Calibri, Arial, sans-serif; color: #555; font-size: 13px; margin: .25rem 0 .6rem;}
+    .sheet-caption {color: var(--jr-muted); font-size: 13px; margin: 0 0 .75rem;}
+    @keyframes jr-rise {from {opacity: 0; transform: translateY(12px) scale(.992);} to {opacity: 1; transform: translateY(0) scale(1);}}
+    @keyframes jr-detail {from {opacity: 0; transform: translateY(-4px);} to {opacity: 1; transform: translateY(0);}}
+    @keyframes jr-float {from {transform: translate3d(0,0,0) scale(1);} to {transform: translate3d(-25px,28px,0) scale(1.08);}}
+    @keyframes jr-shine {0%, 72% {transform: translateX(-110%);} 88%, 100% {transform: translateX(110%);}}
+    @media (max-width: 780px) {
+        .jr-hero {grid-template-columns: auto 1fr; border-radius: 22px;}
+        .jr-logo-shell {width: 66px; height: 66px; border-radius: 19px;}
+        .jr-logo-shell img {width: 52px; height: 52px; border-radius: 12px;}
+        .jr-status-pill {display: none;}
+        .route-sheet-shell {padding: .65rem; border-radius: 18px;}
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important;}
+    }
 </style>
 """
 
+LOGO_PATH = Path(__file__).resolve().parents[1] / "static" / "logo-jr.png"
 
-def apply_spreadsheet_style() -> None:
+
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    encoded = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def apply_spreadsheet_style(active_page: str = "schedule") -> None:
+    if LOGO_PATH.exists():
+        st.logo(str(LOGO_PATH), size="large", icon_image=str(LOGO_PATH))
     st.markdown(SPREADSHEET_CSS, unsafe_allow_html=True)
+    links = (
+        ("schedule", "./", "▦", "Escala semanal"),
+        ("routes", "./Cadastro_de_Rotas", "⇆", "Cadastro de rotas"),
+        ("holidays", "./Feriados", "◈", "Feriados"),
+        ("settings", "./Configuracoes", "⚙", "Configurações"),
+    )
+    nav_links = "".join(
+        f'<a class="{"active" if key == active_page else ""}" href="{href}" target="_self">'
+        f'<span class="jr-nav-icon">{icon}</span>{label}</a>'
+        for key, href, icon, label in links
+    )
+    with st.sidebar:
+        st.markdown(
+            '<div class="jr-nav-label">Operação</div>'
+            f'<nav class="jr-custom-nav">{nav_links}</nav>'
+            '<div class="jr-sidebar-signature">JR Ferragens &amp; Madeiras<br>'
+            "Inteligência para transportes</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_page_header(
+    title: str,
+    subtitle: str,
+    eyebrow: str = "JR Ferragens & Madeiras",
+) -> None:
+    logo = _logo_data_uri() if LOGO_PATH.exists() else ""
+    logo_html = (
+        f'<div class="jr-logo-shell"><img src="{logo}" alt="Logo JR"></div>'
+        if logo
+        else ""
+    )
+    st.markdown(
+        '<section class="jr-hero">'
+        f"{logo_html}"
+        '<div class="jr-hero-copy">'
+        f'<div class="jr-eyebrow">{html.escape(eyebrow)}</div>'
+        f"<h1>{html.escape(title)}</h1>"
+        f"<p>{html.escape(subtitle)}</p>"
+        "</div>"
+        '<div class="jr-status-pill"><span class="jr-status-dot"></span>Sistema operacional</div>'
+        "</section>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_schedule_table(
@@ -44,7 +381,11 @@ def render_schedule_table(
     max_rows = max((len(schedule.get(day, [])) for day in days), default=0)
     max_rows = max(max_rows, 1)
     parts = [
-        '<div class="sheet-caption">Clique em uma célula vermelha para abrir os detalhes do feriado.</div>'
+        (
+            '<div class="route-sheet-shell">'
+            '<div class="sheet-caption">Clique em uma célula vermelha para abrir os detalhes do feriado.</div>'
+            '<div class="route-sheet-scroll">'
+        )
     ]
     parts.append('<table class="route-sheet"><thead><tr>')
     for index, day in enumerate(days):
@@ -88,7 +429,7 @@ def render_schedule_table(
             else:
                 parts.append(f"<td>{html.escape(route.label)}</td>")
         parts.append("</tr>")
-    parts.append("</tbody></table>")
+    parts.append("</tbody></table></div></div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 

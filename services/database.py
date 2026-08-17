@@ -75,6 +75,7 @@ def session_scope(url: str | None = None) -> Iterator[Session]:
         session.close()
 
 
+@lru_cache(maxsize=4)
 def initialize_database(url: str | None = None) -> None:
     Base.metadata.create_all(get_engine(url))
 

@@ -14,6 +14,7 @@ from services.holidays import (
     HolidayService,
     OpenDatasetHolidayProvider,
     ProviderResult,
+    get_general_holidays,
     holiday_matches_for_display,
 )
 
@@ -164,6 +165,20 @@ def test_open_dataset_does_not_write_each_city_to_database(monkeypatch) -> None:
     result = service.city_holidays("Mateus Leme", "MG", 2026, "3140704")
 
     assert result == [holiday]
+
+
+def test_general_holidays_are_loaded_without_network(monkeypatch) -> None:
+    get_general_holidays.clear()
+    monkeypatch.setattr(
+        "services.holidays.requests.get",
+        lambda *args, **kwargs: pytest.fail("não deve consultar API externa"),
+    )
+
+    result = get_general_holidays(2026, "MG")
+
+    independence = next(item for item in result if item.date == date(2026, 9, 7))
+    assert independence.holiday_type == "Nacional"
+    assert independence.source == "python-holidays"
 
 
 def test_national_holiday_is_displayed_only_once_for_all_routes() -> None:

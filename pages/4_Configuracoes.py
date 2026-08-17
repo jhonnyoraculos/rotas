@@ -11,15 +11,25 @@ from services.database import (
     resolve_route_city,
 )
 from services.excel_importer import import_workbook
-from ui.spreadsheet import apply_spreadsheet_style
+from ui.spreadsheet import (
+    LOGO_PATH,
+    apply_spreadsheet_style,
+    render_page_header,
+)
 from utils.city_normalizer import fetch_state_municipalities
 from utils.dates import today_in_brazil
 
-st.set_page_config(page_title="Configurações", page_icon="⚙️", layout="wide")
-apply_spreadsheet_style()
+st.set_page_config(
+    page_title="Configurações", page_icon=str(LOGO_PATH), layout="wide"
+)
+apply_spreadsheet_style("settings")
 initialize_database()
 
-st.title("Configurações")
+render_page_header(
+    "Configurações",
+    "Dados, integrações e saúde operacional do sistema.",
+    "Central de controle",
+)
 st.write(f"**Banco em uso:** {connection_description()}")
 stats = database_stats()
 columns = st.columns(4)
@@ -38,6 +48,7 @@ if uploaded is not None and st.button("Analisar e importar", type="primary"):
     try:
         with st.spinner("Analisando abas, rotas e municípios..."):
             analysis = import_workbook(uploaded, reference_date=today_in_brazil())
+        st.session_state.pop("weekly_holiday_results", None)
         st.success("Planilha importada.")
         st.code("\n".join(analysis.summary_lines()), language="text")
     except Exception as error:  # noqa: BLE001 - arquivo externo pode falhar de vários modos
@@ -81,6 +92,7 @@ else:
                 municipality.state,
                 municipality.ibge_code,
             )
+            st.session_state.pop("weekly_holiday_results", None)
             st.success("Localidade vinculada.")
             st.rerun()
 
