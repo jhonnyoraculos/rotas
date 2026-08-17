@@ -100,35 +100,6 @@ with st.spinner("Verificando feriados da semana..."):
 
 render_schedule_table(monday, schedule, matches)
 
-selected_matches = []
-try:
-    selected_date = date.fromisoformat(str(st.query_params.get("holiday_date")))
-    selected_route_id = int(str(st.query_params.get("holiday_route")))
-    selected_matches = [
-        match
-        for match in matches
-        if match.date == selected_date and match.route_id == selected_route_id
-    ]
-except (TypeError, ValueError):
-    pass
-
-if selected_matches:
-    selected = selected_matches[0]
-    st.markdown('<div id="holiday-details"></div>', unsafe_allow_html=True)
-    with st.container(border=True):
-        st.markdown(
-            f"#### 🔴 {selected.date:%d/%m/%Y} — "
-            f"{selected.route_name} ({selected.route_code})"
-        )
-        for match in selected_matches:
-            detail_col1, detail_col2, detail_col3 = st.columns(3)
-            detail_col1.markdown(f"**Cidade afetada**  \n{match.city}")
-            detail_col2.markdown(f"**Feriado**  \n{match.name}")
-            detail_col3.markdown(f"**Tipo**  \n{match.holiday_type}")
-        if st.button("Fechar informações", key="close_holiday_details"):
-            st.query_params.clear()
-            st.rerun()
-
 button_col, export_col, _ = st.columns([1.2, 1.6, 4])
 with button_col:
     if st.button(

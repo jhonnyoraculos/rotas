@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 from datetime import date
-from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -19,8 +18,12 @@ SPREADSHEET_CSS = """
     .route-sheet th.alert {background: #f4cccc; color: #9c0006;}
     .route-sheet td {height: 34px; background: #fff;}
     .route-sheet td.alert {background: #f4cccc; color: #9c0006; font-weight: 700; cursor: pointer; padding: 0;}
-    .route-sheet td.alert a {display: block; color: inherit; padding: 7px 9px; text-decoration: none;}
-    .route-sheet td.alert a:hover {background: #efb7b7;}
+    .route-sheet details.holiday-cell summary {display: block; color: inherit; padding: 7px 9px; list-style: none;}
+    .route-sheet details.holiday-cell summary::-webkit-details-marker {display: none;}
+    .route-sheet details.holiday-cell summary:hover {background: #efb7b7;}
+    .route-sheet .holiday-inline-details {background: #fff4f4; border-top: 1px solid #d99; color: #333; font-weight: 400; padding: 8px 9px; line-height: 1.45;}
+    .route-sheet .holiday-inline-details strong {color: #9c0006;}
+    .route-sheet .holiday-inline-item + .holiday-inline-item {border-top: 1px solid #ecc; margin-top: 7px; padding-top: 7px;}
     .route-sheet td.empty {color: #aaa;}
     .sheet-caption {font-family: Calibri, Arial, sans-serif; color: #555; font-size: 13px; margin: .25rem 0 .6rem;}
 </style>
@@ -41,7 +44,7 @@ def render_schedule_table(
     max_rows = max((len(schedule.get(day, [])) for day in days), default=0)
     max_rows = max(max_rows, 1)
     parts = [
-        '<div class="sheet-caption">Passe o mouse sobre uma célula vermelha para ver o feriado.</div>'
+        '<div class="sheet-caption">Clique em uma célula vermelha para abrir os detalhes do feriado.</div>'
     ]
     parts.append('<table class="route-sheet"><thead><tr>')
     for index, day in enumerate(days):
@@ -66,16 +69,20 @@ def render_schedule_table(
                     f"{item.city} — {item.name} ({item.holiday_type})"
                     for item in affected
                 )
-                query = urlencode(
-                    {
-                        "holiday_date": day.isoformat(),
-                        "holiday_route": route.id,
-                    }
+                details = "".join(
+                    '<div class="holiday-inline-item">'
+                    f"<div><strong>Cidade:</strong> {html.escape(item.city)}</div>"
+                    f"<div><strong>Feriado:</strong> {html.escape(item.name)}</div>"
+                    f"<div><strong>Tipo:</strong> {html.escape(item.holiday_type)}</div>"
+                    "</div>"
+                    for item in affected
                 )
-                href = html.escape(f"?{query}#holiday-details", quote=True)
                 parts.append(
                     f'<td class="alert" title="{html.escape(tooltip, quote=True)}">'
-                    f'<a href="{href}" target="_self">⚠ {html.escape(route.label)}</a>'
+                    '<details class="holiday-cell">'
+                    f"<summary>⚠ {html.escape(route.label)}</summary>"
+                    f'<div class="holiday-inline-details">{details}</div>'
+                    "</details>"
                     "</td>"
                 )
             else:
