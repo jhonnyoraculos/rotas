@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import holidays as python_holidays
 import requests
@@ -151,6 +153,87 @@ class FeriadosApiProvider(HolidayProvider):
             )
 
 
+OPEN_DATASET_URL = (
+    "https://raw.githubusercontent.com/joaopbini/feriados-brasil/"
+    "master/dados/feriados/municipal/json/{year}.json"
+)
+OPEN_DATASET_LOCAL = Path(__file__).resolve().parents[1] / "data" / "holidays"
+
+
+@st.cache_data(ttl=604800, show_spinner=False)
+def _fetch_open_dataset_year(year: int) -> dict[str, tuple[Holiday, ...]]:
+    local_file = OPEN_DATASET_LOCAL / f"municipal_{year}.json"
+    if local_file.exists():
+        payload = json.loads(local_file.read_text(encoding="utf-8"))
+    else:
+        response = requests.get(OPEN_DATASET_URL.format(year=year), timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, list):
+        raise TypeError("Formato inesperado no dataset de feriados municipais.")
+
+    grouped: dict[str, list[Holiday]] = {}
+    seen: set[tuple[str, date, str, str]] = set()
+    for item in payload:
+        ibge_code = str(item.get("codigo_ibge") or "").strip()
+        if not ibge_code:
+            continue
+        holiday = Holiday(
+            date=_parse_date(str(item["data"])),
+            name=str(item.get("nome") or "Feriado Municipal"),
+            holiday_type=str(item.get("tipo") or "Municipal").title(),
+            source="feriados-brasil",
+        )
+        key = (ibge_code, holiday.date, holiday.name, holiday.holiday_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped.setdefault(ibge_code, []).append(holiday)
+    return {
+        code: tuple(sorted(entries, key=lambda holiday: holiday.date))
+        for code, entries in grouped.items()
+    }
+
+
+class OpenDatasetHolidayProvider(HolidayProvider):
+    """Dataset aberto por ano, sem conta ou token, indexado por código IBGE."""
+
+    def get_holidays(
+        self, city: str, state: str, year: int, ibge_code: str | None = None
+    ) -> ProviderResult:
+        if not ibge_code:
+            return ProviderResult((), False, "Município sem código IBGE.")
+        try:
+            holidays_by_city = _fetch_open_dataset_year(year)
+            return ProviderResult(
+                holidays_by_city.get(str(ibge_code), ()),
+                complete=True,
+            )
+        except requests.HTTPError as error:
+            status = error.response.status_code if error.response is not None else None
+            if status == 404:
+                message = (
+                    f"O dataset gratuito ainda não possui dados municipais de {year}."
+                )
+            else:
+                message = "Não foi possível baixar o dataset gratuito de feriados."
+            return ProviderResult((), False, message, stop_requests=True)
+        except requests.RequestException:
+            return ProviderResult(
+                (),
+                False,
+                "O dataset gratuito está temporariamente indisponível; usando o cache do banco.",
+                stop_requests=True,
+            )
+        except (ValueError, TypeError, KeyError):
+            return ProviderResult(
+                (),
+                False,
+                "O dataset gratuito retornou dados inválidos; usando o cache do banco.",
+                stop_requests=True,
+            )
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_general_holidays(year: int, state: str = "MG") -> tuple[Holiday, ...]:
     """BrasilAPI para nacionais; python-holidays cobre o fallback e o estado."""
@@ -209,6 +292,7 @@ def _fetch_city_online(
 def clear_holiday_memory_cache() -> None:
     get_general_holidays.clear()
     _fetch_city_online.clear()
+    _fetch_open_dataset_year.clear()
 
 
 class HolidayService:
@@ -218,7 +302,7 @@ class HolidayService:
         persist: bool = True,
         general_loader: Callable[[int, str], Iterable[Holiday]] = get_general_holidays,
     ):
-        self.provider = provider or FeriadosApiProvider()
+        self.provider = provider or OpenDatasetHolidayProvider()
         self.persist = persist
         self.general_loader = general_loader
         self.warnings: set[str] = set()
