@@ -40,21 +40,44 @@ if imported:
 
 if "week_monday" not in st.session_state:
     st.session_state.week_monday = monday_of(today_in_brazil())
+if "week_search_date" not in st.session_state:
+    st.session_state.week_search_date = st.session_state.week_monday
 
 st.title("Escala semanal de rotas")
 left, center, right, spacer = st.columns([1.2, 0.7, 1.2, 4])
 with left:
     if st.button("◀ Semana anterior", use_container_width=True):
         st.session_state.week_monday -= timedelta(days=7)
+        st.session_state.week_search_date = st.session_state.week_monday
         st.rerun()
 with center:
     if st.button("Hoje", use_container_width=True):
         st.session_state.week_monday = monday_of(today_in_brazil())
+        st.session_state.week_search_date = today_in_brazil()
         st.rerun()
 with right:
     if st.button("Próxima semana ▶", use_container_width=True):
         st.session_state.week_monday += timedelta(days=7)
+        st.session_state.week_search_date = st.session_state.week_monday
         st.rerun()
+
+with st.form("week_calendar_search"):
+    calendar_col, search_col = st.columns([3, 1], vertical_alignment="bottom")
+    with calendar_col:
+        searched_date = st.date_input(
+            "Pesquisar semana por data",
+            key="week_search_date",
+            format="DD/MM/YYYY",
+            help="Escolha qualquer dia; a semana de segunda a sexta será exibida.",
+        )
+    with search_col:
+        search_week = st.form_submit_button(
+            "Pesquisar semana", type="primary", use_container_width=True
+        )
+
+if search_week:
+    st.session_state.week_monday = monday_of(searched_date)
+    st.rerun()
 
 monday = st.session_state.week_monday
 st.subheader(week_title(monday))

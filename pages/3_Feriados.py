@@ -15,6 +15,7 @@ from services.database import (
 )
 from services.holidays import clear_holiday_memory_cache
 from ui.spreadsheet import apply_spreadsheet_style
+from utils.city_normalizer import normalize_text
 from utils.dates import today_in_brazil
 
 st.set_page_config(page_title="Feriados", page_icon="📅", layout="wide")
@@ -26,12 +27,55 @@ st.caption(
     "Consulte o cache persistente e cadastre uma exceção municipal quando o provedor estiver indisponível."
 )
 
-year = st.number_input(
-    "Ano", min_value=1900, max_value=2199, value=today_in_brazil().year
-)
-entries = list_holiday_cache(int(year))
+st.markdown("### Pesquisar feriados")
+year_col, text_col = st.columns([1, 3])
+with year_col:
+    year = st.number_input(
+        "Ano", min_value=1900, max_value=2199, value=today_in_brazil().year
+    )
+with text_col:
+    search_text = st.text_input(
+        "Pesquisar",
+        placeholder="Digite o nome do feriado ou da cidade",
+    )
 
-if entries:
+entries = list_holiday_cache(int(year))
+city_options = sorted({item.city for item in entries})
+type_options = sorted({item.holiday_type for item in entries})
+source_options = sorted({item.source for item in entries})
+
+city_col, type_col, source_col = st.columns(3)
+with city_col:
+    selected_cities = st.multiselect(
+        "Município", options=city_options, placeholder="Todos os municípios"
+    )
+with type_col:
+    selected_types = st.multiselect(
+        "Tipo", options=type_options, placeholder="Todos os tipos"
+    )
+with source_col:
+    selected_sources = st.multiselect(
+        "Fonte", options=source_options, placeholder="Todas as fontes"
+    )
+
+normalized_search = normalize_text(search_text)
+filtered_entries = [
+    item
+    for item in entries
+    if (not selected_cities or item.city in selected_cities)
+    and (not selected_types or item.holiday_type in selected_types)
+    and (not selected_sources or item.source in selected_sources)
+    and (
+        not normalized_search
+        or normalized_search
+        in normalize_text(f"{item.city} {item.holiday_name} {item.state}")
+    )
+]
+
+if filtered_entries:
+    st.caption(
+        f"{len(filtered_entries)} feriado(s) encontrado(s) de {len(entries)} armazenado(s) no ano."
+    )
     st.dataframe(
         pd.DataFrame(
             [
@@ -43,12 +87,14 @@ if entries:
                     "Tipo": item.holiday_type,
                     "Fonte": item.source,
                 }
-                for item in entries
+                for item in filtered_entries
             ]
         ),
         hide_index=True,
         use_container_width=True,
     )
+elif entries:
+    st.info("Nenhum feriado corresponde aos filtros selecionados.")
 else:
     st.info("Ainda não há feriados armazenados para esse ano.")
 
