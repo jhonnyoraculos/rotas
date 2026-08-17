@@ -327,6 +327,7 @@ class HolidayService:
         self.general_loader = general_loader
         self.warnings: set[str] = set()
         self._municipal_requests_blocked = False
+        self._manual_by_year: dict[int, dict[str, list[Holiday]]] = {}
 
     def _city_key(self, city: str, ibge_code: str | None) -> str:
         return str(ibge_code) if ibge_code else normalize_text(city)
@@ -344,6 +345,23 @@ class HolidayService:
             if response.stop_requests:
                 self._municipal_requests_blocked = True
             return list(response.holidays)
+
+        if isinstance(self.provider, OpenDatasetHolidayProvider):
+            response = self.provider.get_holidays(city, state, year, ibge_code)
+            if response.message:
+                self.warnings.add(response.message)
+            if response.stop_requests:
+                self._municipal_requests_blocked = True
+            if response.complete:
+                combined = {
+                    (item.date, item.name, item.holiday_type): item
+                    for item in response.holidays
+                }
+                for item in self._manual_holidays(city_key, year):
+                    combined[(item.date, item.name, item.holiday_type)] = item
+                return sorted(combined.values(), key=lambda item: item.date)
+            if not ibge_code:
+                return self._manual_holidays(city_key, year)
 
         cached = database.get_cached_city_holidays(city_key, year)
         if self._municipal_requests_blocked:
@@ -391,6 +409,21 @@ class HolidayService:
             Holiday(item.date, item.holiday_name, item.holiday_type, item.source)
             for item in cached
         ]
+
+    def _manual_holidays(self, city_key: str, year: int) -> list[Holiday]:
+        if year not in self._manual_by_year:
+            grouped: dict[str, list[Holiday]] = {}
+            for item in database.list_manual_holiday_cache(year):
+                grouped.setdefault(item.city_key, []).append(
+                    Holiday(
+                        item.date,
+                        item.holiday_name,
+                        item.holiday_type,
+                        item.source,
+                    )
+                )
+            self._manual_by_year[year] = grouped
+        return self._manual_by_year[year].get(city_key, [])
 
     def match_week(self, schedule: dict[date, list]) -> list[HolidayMatch]:
         matches: list[HolidayMatch] = []
