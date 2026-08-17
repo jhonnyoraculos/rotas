@@ -290,8 +290,10 @@ SPREADSHEET_CSS = """
     .route-sheet td {height: 36px; background: rgba(255,255,255,.74); transition: background .18s ease;}
     .route-sheet tr:hover td {background: rgba(235, 245, 255, .91);}
     .route-sheet td.alert {background: linear-gradient(115deg, rgba(255,220,227,.96), rgba(255,239,242,.92)); color: #a30f30; font-weight: 760; cursor: pointer; padding: 0;}
-    .route-sheet details.holiday-cell summary {display: block; color: inherit; padding: 7px 9px; list-style: none;}
+    .route-sheet details.holiday-cell summary {display: flex; align-items: center; justify-content: space-between; gap: 8px; color: inherit; padding: 7px 9px; list-style: none;}
     .route-sheet details.holiday-cell summary::-webkit-details-marker {display: none;}
+    .route-sheet details.holiday-cell summary::after {content: "+"; flex: 0 0 auto; font-size: 16px; font-weight: 850; line-height: 1;}
+    .route-sheet details.holiday-cell[open] summary::after {content: "−";}
     .route-sheet details.holiday-cell summary:hover {background: rgba(200, 20, 56, .08);}
     .route-sheet details.holiday-cell[open] summary {background: rgba(200, 20, 56, .10);}
     .route-sheet .holiday-inline-details {background: rgba(255,255,255,.78); border-top: 1px solid rgba(200,20,56,.25); color: #26394f; font-weight: 400; padding: 9px 10px; line-height: 1.5; animation: jr-detail .22s ease-out both;}
