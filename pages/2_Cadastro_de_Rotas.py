@@ -15,6 +15,7 @@ from ui.spreadsheet import (
     apply_spreadsheet_style,
     render_page_header,
 )
+from utils.city_normalizer import resolve_municipality_fields
 
 st.set_page_config(
     page_title="Cadastro de Rotas", page_icon=str(LOGO_PATH), layout="wide"
@@ -27,6 +28,16 @@ render_page_header(
     "Mantenha a relação real entre rota, localidade e município oficial.",
     "Gestão da malha",
 )
+
+save_notice = st.session_state.pop("route_save_notice", None)
+if save_notice:
+    st.success(save_notice["message"])
+    if save_notice["unresolved"]:
+        st.warning(
+            "Não foi possível localizar automaticamente no IBGE: "
+            + ", ".join(save_notice["unresolved"])
+            + ". Confira esses nomes em Configurações → Localidades pendentes."
+        )
 
 routes = list_routes()
 edit_tab, new_tab = st.tabs(["Editar rota", "Nova rota"])
@@ -77,7 +88,10 @@ with edit_tab:
                             required=True
                         ),
                         "Município oficial": st.column_config.TextColumn(
-                            help="Deixe vazio quando a localidade ainda não estiver vinculada."
+                            help=(
+                                "Ao salvar, o sistema pesquisa o nome exato no IBGE e "
+                                "preenche o código automaticamente."
+                            )
                         ),
                         "UF": st.column_config.TextColumn(
                             default="MG", width="small"
@@ -95,6 +109,8 @@ with edit_tab:
                 try:
                     saved = save_route(route.id, code, name, active)
                     rows = []
+                    auto_filled = 0
+                    unresolved: list[str] = []
                     for item in edited.to_dict("records"):
                         original = item.get("Localidade original")
                         if pd.isna(original) or not str(original).strip():
@@ -102,19 +118,47 @@ with edit_tab:
                         municipality = item.get("Município oficial")
                         ibge = item.get("Código IBGE")
                         state = item.get("UF")
+                        original_value = str(original).strip()
+                        municipality_value = (
+                            ""
+                            if pd.isna(municipality)
+                            else str(municipality).strip()
+                        )
+                        state_value = (
+                            "MG" if pd.isna(state) else str(state).strip()
+                        )
+                        ibge_value = "" if pd.isna(ibge) else str(ibge).strip()
+                        resolved_name, resolved_state, resolved_code = (
+                            resolve_municipality_fields(
+                                original_value,
+                                municipality_value,
+                                state_value,
+                                ibge_value,
+                            )
+                        )
+                        if not ibge_value and resolved_code:
+                            auto_filled += 1
+                        elif municipality_value and not resolved_code:
+                            unresolved.append(municipality_value)
                         rows.append(
                             {
-                                "city_original": str(original).strip(),
-                                "municipality_name": ""
-                                if pd.isna(municipality)
-                                else str(municipality).strip(),
-                                "state": "MG" if pd.isna(state) else str(state).strip(),
-                                "ibge_code": "" if pd.isna(ibge) else str(ibge).strip(),
+                                "city_original": original_value,
+                                "municipality_name": resolved_name,
+                                "state": resolved_state,
+                                "ibge_code": resolved_code,
                             }
                         )
                     replace_route_cities(saved.id, rows)
                     st.session_state.pop("weekly_holiday_results", None)
-                    st.success("Rota salva.")
+                    message = "Rota salva."
+                    if auto_filled:
+                        message += (
+                            f" {auto_filled} código(s) IBGE preenchido(s) automaticamente."
+                        )
+                    st.session_state.route_save_notice = {
+                        "message": message,
+                        "unresolved": sorted(set(unresolved)),
+                    }
                     st.rerun()
                 except (ValueError, IntegrityError) as error:
                     st.error(f"Não foi possível salvar: {error}")
