@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 from datetime import date
+from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -17,7 +18,9 @@ SPREADSHEET_CSS = """
     .route-sheet th {background: #d9ead3; text-align: center; color: #202020; font-weight: 700;}
     .route-sheet th.alert {background: #f4cccc; color: #9c0006;}
     .route-sheet td {height: 34px; background: #fff;}
-    .route-sheet td.alert {background: #f4cccc; color: #9c0006; font-weight: 700; cursor: help;}
+    .route-sheet td.alert {background: #f4cccc; color: #9c0006; font-weight: 700; cursor: pointer; padding: 0;}
+    .route-sheet td.alert a {display: block; color: inherit; padding: 7px 9px; text-decoration: none;}
+    .route-sheet td.alert a:hover {background: #efb7b7;}
     .route-sheet td.empty {color: #aaa;}
     .sheet-caption {font-family: Calibri, Arial, sans-serif; color: #555; font-size: 13px; margin: .25rem 0 .6rem;}
 </style>
@@ -63,8 +66,17 @@ def render_schedule_table(
                     f"{item.city} — {item.name} ({item.holiday_type})"
                     for item in affected
                 )
+                query = urlencode(
+                    {
+                        "holiday_date": day.isoformat(),
+                        "holiday_route": route.id,
+                    }
+                )
+                href = html.escape(f"?{query}#holiday-details", quote=True)
                 parts.append(
-                    f'<td class="alert" title="{html.escape(tooltip, quote=True)}">⚠ {html.escape(route.label)}</td>'
+                    f'<td class="alert" title="{html.escape(tooltip, quote=True)}">'
+                    f'<a href="{href}" target="_self">⚠ {html.escape(route.label)}</a>'
+                    "</td>"
                 )
             else:
                 parts.append(f"<td>{html.escape(route.label)}</td>")
