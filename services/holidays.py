@@ -45,6 +45,26 @@ class HolidayMatch:
     source: str
 
 
+def holiday_matches_for_display(
+    matches: Iterable[HolidayMatch],
+) -> list[HolidayMatch]:
+    """Remove repetições por rota dos feriados que atingem todo o país."""
+    result: list[HolidayMatch] = []
+    national_seen: set[tuple[date, str, str]] = set()
+    for match in matches:
+        if normalize_text(match.holiday_type) == "NACIONAL":
+            key = (
+                match.date,
+                normalize_text(match.name),
+                normalize_text(match.holiday_type),
+            )
+            if key in national_seen:
+                continue
+            national_seen.add(key)
+        result.append(match)
+    return result
+
+
 class HolidayProvider(ABC):
     @abstractmethod
     def get_holidays(

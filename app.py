@@ -15,7 +15,7 @@ from services.database import (
 )
 from services.excel_exporter import export_week_to_excel
 from services.excel_importer import auto_import_if_available
-from services.holidays import HolidayService
+from services.holidays import HolidayService, holiday_matches_for_display
 from ui.spreadsheet import (
     apply_spreadsheet_style,
     render_schedule_table,
@@ -164,12 +164,22 @@ if st.session_state.get("editing"):
             st.rerun()
 
 st.markdown("### Feriados encontrados nesta semana")
-if not matches:
+display_matches = holiday_matches_for_display(matches)
+if not display_matches:
     st.success("Nenhum feriado encontrado para as rotas desta semana.")
 else:
-    for match in matches:
+    for match in display_matches:
+        if match.holiday_type.casefold() == "nacional":
+            title = (
+                f"🔴 {match.date:%d/%m/%Y} — Todas as cidades — {match.name}"
+            )
+        else:
+            title = (
+                f"🔴 {match.date:%d/%m/%Y} — {match.route_name} "
+                f"({match.route_code}) — {match.city}"
+            )
         with st.expander(
-            f"🔴 {match.date:%d/%m/%Y} — {match.route_name} ({match.route_code}) — {match.city}"
+            title
         ):
             st.write(f"**Cidade afetada:** {match.city}")
             st.write(f"**Feriado:** {match.name}")
