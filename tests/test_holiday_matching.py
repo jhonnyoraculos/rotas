@@ -8,10 +8,12 @@ import requests
 from services.holidays import (
     FeriadosApiProvider,
     Holiday,
+    HolidayMatch,
     HolidayProvider,
     HolidayService,
     OpenDatasetHolidayProvider,
     ProviderResult,
+    holiday_matches_for_display,
 )
 
 
@@ -132,3 +134,40 @@ def test_open_dataset_is_the_default_provider() -> None:
     service = HolidayService(persist=False)
 
     assert isinstance(service.provider, OpenDatasetHolidayProvider)
+
+
+def test_national_holiday_is_displayed_only_once_for_all_routes() -> None:
+    national = [
+        HolidayMatch(
+            date=date(2026, 9, 7),
+            route_id=route_id,
+            route_code=route_code,
+            route_name=route_name,
+            city="Todas as cidades",
+            name="Independência do Brasil",
+            holiday_type="Nacional",
+            source="python-holidays",
+        )
+        for route_id, route_code, route_name in (
+            (10, "R.10", "Divinópolis"),
+            (100, "R.100", "Santa Luzia"),
+            (1000, "R.1000", "Cláudio"),
+        )
+    ]
+    municipal = HolidayMatch(
+        date=date(2026, 9, 8),
+        route_id=40,
+        route_code="R.40",
+        route_name="Itaúna",
+        city="Itaúna",
+        name="Feriado Municipal",
+        holiday_type="Municipal",
+        source="manual",
+    )
+
+    result = holiday_matches_for_display([*national, municipal])
+
+    assert len(result) == 2
+    assert result[0].city == "Todas as cidades"
+    assert result[0].holiday_type == "Nacional"
+    assert result[1] == municipal
