@@ -243,11 +243,18 @@ def import_workbook(
 
 
 def auto_import_if_available(
-    path: str | Path = "data/ROTAS_2026.xlsx",
+    path: str | Path | None = None,
 ) -> WorkbookAnalysis | None:
     from services.database import count_routes
 
-    candidate = Path(path)
-    if count_routes() or not candidate.exists():
+    if count_routes():
         return None
-    return import_workbook(candidate)
+    candidates = (
+        [Path(path)]
+        if path is not None
+        else [Path("data/ROTAS_2026.xlsx"), Path("ROTAS_2026.xlsx")]
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return import_workbook(candidate)
+    return None

@@ -37,13 +37,14 @@ FERIADOS_API_KEY = "sua_chave"
 
 ## Importação inicial
 
-Copie a planilha para:
+A planilha inicial já acompanha o projeto como `ROTAS_2026.xlsx`. A aplicação procura primeiro em:
 
 ```text
 data/ROTAS_2026.xlsx
+ROTAS_2026.xlsx
 ```
 
-Quando o banco ainda não contém rotas, a primeira abertura importa o arquivo automaticamente. Também é possível enviar o arquivo pela página **Configurações**.
+Quando o banco ainda não contém rotas, a primeira abertura importa automaticamente o primeiro arquivo encontrado. Também é possível enviar outra versão pela página **Configurações**.
 
 Para validar somente o parser e imprimir abas, contagens e exemplos de `rota → cidades`:
 
