@@ -14,49 +14,56 @@ from services.database import (
     list_routes,
 )
 from services.holidays import clear_holiday_memory_cache
-from ui.spreadsheet import apply_spreadsheet_style
+from ui.spreadsheet import (
+    LOGO_PATH,
+    apply_spreadsheet_style,
+    render_page_header,
+)
 from utils.city_normalizer import normalize_text
 from utils.dates import today_in_brazil
 
-st.set_page_config(page_title="Feriados", page_icon="📅", layout="wide")
-apply_spreadsheet_style()
+st.set_page_config(page_title="Feriados", page_icon=str(LOGO_PATH), layout="wide")
+apply_spreadsheet_style("holidays")
 initialize_database()
 
-st.title("Feriados")
-st.caption(
-    "Consulte o cache persistente e cadastre uma exceção municipal quando o provedor estiver indisponível."
+render_page_header(
+    "Feriados",
+    "Pesquise o calendário e mantenha exceções municipais com rapidez.",
+    "Calendário operacional",
 )
 
 st.markdown("### Pesquisar feriados")
-year_col, text_col = st.columns([1, 3])
-with year_col:
-    year = st.number_input(
-        "Ano", min_value=1900, max_value=2199, value=today_in_brazil().year
-    )
-with text_col:
-    search_text = st.text_input(
-        "Pesquisar",
-        placeholder="Digite o nome do feriado ou da cidade",
-    )
+with st.form("holiday_filters"):
+    year_col, text_col = st.columns([1, 3])
+    with year_col:
+        year = st.number_input(
+            "Ano", min_value=1900, max_value=2199, value=today_in_brazil().year
+        )
+    with text_col:
+        search_text = st.text_input(
+            "Pesquisar",
+            placeholder="Digite o nome do feriado ou da cidade",
+        )
 
-entries = list_holiday_cache(int(year))
-city_options = sorted({item.city for item in entries})
-type_options = sorted({item.holiday_type for item in entries})
-source_options = sorted({item.source for item in entries})
+    entries = list_holiday_cache(int(year))
+    city_options = sorted({item.city for item in entries})
+    type_options = sorted({item.holiday_type for item in entries})
+    source_options = sorted({item.source for item in entries})
 
-city_col, type_col, source_col = st.columns(3)
-with city_col:
-    selected_cities = st.multiselect(
-        "Município", options=city_options, placeholder="Todos os municípios"
-    )
-with type_col:
-    selected_types = st.multiselect(
-        "Tipo", options=type_options, placeholder="Todos os tipos"
-    )
-with source_col:
-    selected_sources = st.multiselect(
-        "Fonte", options=source_options, placeholder="Todas as fontes"
-    )
+    city_col, type_col, source_col = st.columns(3)
+    with city_col:
+        selected_cities = st.multiselect(
+            "Município", options=city_options, placeholder="Todos os municípios"
+        )
+    with type_col:
+        selected_types = st.multiselect(
+            "Tipo", options=type_options, placeholder="Todos os tipos"
+        )
+    with source_col:
+        selected_sources = st.multiselect(
+            "Fonte", options=source_options, placeholder="Todas as fontes"
+        )
+    st.form_submit_button("Aplicar filtros", type="primary")
 
 normalized_search = normalize_text(search_text)
 filtered_entries = [
@@ -91,7 +98,7 @@ if filtered_entries:
             ]
         ),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 elif entries:
     st.info("Nenhum feriado corresponde aos filtros selecionados.")
@@ -125,6 +132,7 @@ else:
                     holiday_name.strip(),
                     "Municipal",
                 )
+                st.session_state.pop("weekly_holiday_results", None)
                 st.success("Feriado salvo.")
                 st.rerun()
 
@@ -141,12 +149,14 @@ if manual_entries:
     )
     if st.button("Excluir selecionado"):
         delete_manual_holiday(selected_manual)
+        st.session_state.pop("weekly_holiday_results", None)
         st.success("Cadastro manual excluído.")
         st.rerun()
 
 if st.button("Atualizar consultas online neste ano"):
     invalidate_holiday_sync(year=int(year))
     clear_holiday_memory_cache()
+    st.session_state.pop("weekly_holiday_results", None)
     st.success(
         "Cache de consulta invalidado. As cidades serão atualizadas ao abrir uma semana."
     )

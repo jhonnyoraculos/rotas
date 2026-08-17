@@ -256,29 +256,12 @@ class OpenDatasetHolidayProvider(HolidayProvider):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_general_holidays(year: int, state: str = "MG") -> tuple[Holiday, ...]:
-    """BrasilAPI para nacionais; python-holidays cobre o fallback e o estado."""
+    """Calendário nacional e estadual local, sem espera por serviços externos."""
     national: dict[date, Holiday] = {}
-    try:
-        response = requests.get(
-            f"https://brasilapi.com.br/api/feriados/v1/{year}", timeout=10
-        )
-        response.raise_for_status()
-        for item in response.json():
-            holiday_date = _parse_date(str(item["date"]))
-            national[holiday_date] = Holiday(
-                date=holiday_date,
-                name=str(item["name"]),
-                holiday_type="Nacional",
-                source="brasilapi",
-            )
-    except (requests.RequestException, ValueError, TypeError, KeyError):
-        pass
-
     offline_national = python_holidays.country_holidays("BR", years=[year])
     for holiday_date, name in offline_national.items():
-        national.setdefault(
-            holiday_date,
-            Holiday(holiday_date, str(name), "Nacional", "python-holidays"),
+        national[holiday_date] = Holiday(
+            holiday_date, str(name), "Nacional", "python-holidays"
         )
 
     result = dict(national)
