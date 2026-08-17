@@ -3,7 +3,15 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-from services.holidays import Holiday, HolidayProvider, HolidayService, ProviderResult
+import requests
+
+from services.holidays import (
+    FeriadosApiProvider,
+    Holiday,
+    HolidayProvider,
+    HolidayService,
+    ProviderResult,
+)
 
 
 class FakeProvider(HolidayProvider):
@@ -46,3 +54,54 @@ def test_holiday_in_any_city_marks_the_route() -> None:
     assert matches[0].route_code == "R.40"
     assert matches[0].city == "Mateus Leme"
     assert matches[0].date == date(2026, 8, 21)
+
+
+def test_provider_uses_bearer_authorization(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"feriados": []}
+
+    def fake_get(url, **kwargs):
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("services.holidays.requests.get", fake_get)
+
+    result = FeriadosApiProvider("token-valido").get_holidays(
+        "Itaúna", "MG", 2026, "3133808"
+    )
+
+    assert result.complete
+    assert captured["headers"] == {"Authorization": "Bearer token-valido"}
+
+
+def test_provider_stops_after_rejected_key(monkeypatch) -> None:
+    calls = 0
+
+    def fake_get(url, **kwargs):
+        nonlocal calls
+        calls += 1
+        response = requests.Response()
+        response.status_code = 401
+        response.url = url
+        raise requests.HTTPError(response=response)
+
+    monkeypatch.setattr("services.holidays.requests.get", fake_get)
+    service = HolidayService(
+        provider=FeriadosApiProvider("token-invalido"),
+        persist=False,
+        general_loader=lambda year, state: [],
+    )
+
+    service.city_holidays("Itaúna", "MG", 2026, "3133808")
+    service.city_holidays("Mateus Leme", "MG", 2026, "3140704")
+
+    assert calls == 1
+    assert service.warnings == {
+        "A FERIADOS_API_KEY foi recusada. Copie novamente o token do painel do provedor."
+    }

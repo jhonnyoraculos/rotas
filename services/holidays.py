@@ -28,6 +28,7 @@ class ProviderResult:
     holidays: tuple[Holiday, ...]
     complete: bool
     message: str | None = None
+    stop_requests: bool = False
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,10 @@ class FeriadosApiProvider(HolidayProvider):
     base_url = "https://feriadosapi.com/api/v1/feriados/cidade/{ibge_code}"
 
     def __init__(self, api_key: str | None = None, timeout: int = 12):
-        self.api_key = api_key or _api_key()
+        raw_key = api_key or _api_key()
+        if raw_key and raw_key.lower().startswith("bearer "):
+            raw_key = raw_key[7:]
+        self.api_key = raw_key.strip() if raw_key else None
         self.timeout = timeout
 
     def get_holidays(
@@ -92,12 +96,13 @@ class FeriadosApiProvider(HolidayProvider):
                 (),
                 False,
                 "FERIADOS_API_KEY não configurada; cobertura municipal parcial.",
+                stop_requests=True,
             )
         try:
             response = requests.get(
                 self.base_url.format(ibge_code=ibge_code),
                 params={"ano": year},
-                headers={"X-API-Key": self.api_key},
+                headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -118,8 +123,32 @@ class FeriadosApiProvider(HolidayProvider):
                     )
                 )
             return ProviderResult(tuple(parsed), True)
-        except (requests.RequestException, ValueError, TypeError, KeyError) as error:
-            return ProviderResult((), False, f"Falha na consulta municipal: {error}")
+        except requests.HTTPError as error:
+            status = error.response.status_code if error.response is not None else None
+            messages = {
+                401: "A FERIADOS_API_KEY foi recusada. Copie novamente o token do painel do provedor.",
+                403: "A chave não possui acesso aos municípios do interior ou está sem cota.",
+                429: "O limite de consultas da Feriados API foi atingido. Tente novamente mais tarde.",
+            }
+            message = messages.get(
+                status,
+                f"A Feriados API respondeu com erro HTTP {status or 'desconhecido'}.",
+            )
+            return ProviderResult((), False, message, stop_requests=True)
+        except requests.RequestException:
+            return ProviderResult(
+                (),
+                False,
+                "A Feriados API está indisponível. Os dados em cache continuam em uso.",
+                stop_requests=True,
+            )
+        except (ValueError, TypeError, KeyError):
+            return ProviderResult(
+                (),
+                False,
+                "A Feriados API retornou uma resposta inválida. Os dados em cache continuam em uso.",
+                stop_requests=True,
+            )
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -193,6 +222,7 @@ class HolidayService:
         self.persist = persist
         self.general_loader = general_loader
         self.warnings: set[str] = set()
+        self._municipal_requests_blocked = False
 
     def _city_key(self, city: str, ibge_code: str | None) -> str:
         return str(ibge_code) if ibge_code else normalize_text(city)
@@ -202,12 +232,21 @@ class HolidayService:
     ) -> list[Holiday]:
         city_key = self._city_key(city, ibge_code)
         if not self.persist:
+            if self._municipal_requests_blocked:
+                return []
             response = self.provider.get_holidays(city, state, year, ibge_code)
             if response.message:
                 self.warnings.add(response.message)
+            if response.stop_requests:
+                self._municipal_requests_blocked = True
             return list(response.holidays)
 
         cached = database.get_cached_city_holidays(city_key, year)
+        if self._municipal_requests_blocked:
+            return [
+                Holiday(item.date, item.holiday_name, item.holiday_type, item.source)
+                for item in cached
+            ]
         if database.holiday_sync_is_fresh(city_key, year):
             return [
                 Holiday(item.date, item.holiday_name, item.holiday_type, item.source)
@@ -241,6 +280,8 @@ class HolidayService:
             cached = database.get_cached_city_holidays(city_key, year)
         elif response.message:
             self.warnings.add(response.message)
+        if response.stop_requests:
+            self._municipal_requests_blocked = True
 
         return [
             Holiday(item.date, item.holiday_name, item.holiday_type, item.source)

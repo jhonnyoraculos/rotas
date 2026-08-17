@@ -92,5 +92,6 @@ st.code(
 )
 st.caption(
     "Salve em .streamlit/secrets.toml localmente ou configure os mesmos nomes nos segredos "
-    "do Streamlit Community Cloud. Nunca envie esse arquivo ao Git."
+    "do Streamlit Community Cloud. Em FERIADOS_API_KEY, cole somente o token, sem escrever "
+    "'Bearer'. Nunca envie esse arquivo ao Git."
 )
