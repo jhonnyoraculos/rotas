@@ -32,6 +32,7 @@ SPREADSHEET_CSS = """
             radial-gradient(circle at 94% 7%, rgba(200, 20, 56, .16), transparent 28%),
             linear-gradient(145deg, #edf4fb 0%, #f9fbfe 48%, #eef3f9 100%);
         background-attachment: fixed;
+        overflow-x: hidden;
     }
     [data-testid="stHeader"] {
         background: rgba(244, 248, 253, .62);
@@ -267,6 +268,8 @@ SPREADSHEET_CSS = """
         box-shadow: 0 10px 30px rgba(7, 43, 88, .08);
         backdrop-filter: blur(14px);
     }
+    .st-key-week_navigation {max-width: 42rem;}
+    .st-key-schedule_actions {max-width: 36rem; margin-top: .75rem;}
     .route-sheet-shell {
         padding: 1rem;
         border: 1px solid rgba(255, 255, 255, .84);
@@ -276,6 +279,7 @@ SPREADSHEET_CSS = """
         backdrop-filter: blur(22px) saturate(150%);
         animation: jr-rise .5s .08s cubic-bezier(.2, .8, .2, 1) both;
     }
+    .route-week-mobile {display: none;}
     .route-sheet-scroll {overflow-x: auto; border-radius: 17px;}
     .route-sheet {border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 920px; width: 100%; background: rgba(255,255,255,.50); font-family: Inter, "Segoe UI", sans-serif; font-size: 13px;}
     .route-sheet th, .route-sheet td {border-right: 1px solid rgba(7,43,88,.10); border-bottom: 1px solid rgba(7,43,88,.10); padding: 8px 10px; text-align: left; vertical-align: middle; overflow-wrap: anywhere;}
@@ -295,16 +299,166 @@ SPREADSHEET_CSS = """
     .route-sheet .holiday-inline-item + .holiday-inline-item {border-top: 1px solid rgba(200,20,56,.16); margin-top: 7px; padding-top: 7px;}
     .route-sheet td.empty {color: #aaa;}
     .sheet-caption {color: var(--jr-muted); font-size: 13px; margin: 0 0 .75rem;}
+    .mobile-table-hint {display: none;}
+    .holiday-mobile-list {display: none;}
     @keyframes jr-rise {from {opacity: 0; transform: translateY(12px) scale(.992);} to {opacity: 1; transform: translateY(0) scale(1);}}
     @keyframes jr-detail {from {opacity: 0; transform: translateY(-4px);} to {opacity: 1; transform: translateY(0);}}
     @keyframes jr-float {from {transform: translate3d(0,0,0) scale(1);} to {transform: translate3d(-25px,28px,0) scale(1.08);}}
     @keyframes jr-shine {0%, 72% {transform: translateX(-110%);} 88%, 100% {transform: translateX(110%);}}
     @media (max-width: 780px) {
-        .jr-hero {grid-template-columns: auto 1fr; border-radius: 22px;}
-        .jr-logo-shell {width: 66px; height: 66px; border-radius: 19px;}
-        .jr-logo-shell img {width: 52px; height: 52px; border-radius: 12px;}
+        [data-testid="stMainBlockContainer"], .block-container {
+            padding: .65rem .65rem 2rem;
+        }
+        [data-testid="stHeader"] {height: 3.25rem;}
+        [data-testid="stSidebarCollapsedControl"] button,
+        [data-testid="stSidebarCollapseButton"] button {min-width: 44px; min-height: 44px;}
+        section[data-testid="stSidebar"] {width: min(86vw, 320px) !important;}
+        .jr-hero {
+            grid-template-columns: auto minmax(0, 1fr);
+            min-height: 0;
+            gap: .75rem;
+            margin: 0 0 .9rem;
+            padding: .85rem;
+            border-radius: 19px;
+        }
+        .jr-logo-shell {width: 54px; height: 54px; border-radius: 16px;}
+        .jr-logo-shell img {width: 44px; height: 44px; border-radius: 11px;}
+        .jr-eyebrow {margin-bottom: .2rem; font-size: .58rem; letter-spacing: .11em;}
+        .jr-eyebrow::before {width: 13px;}
+        .jr-hero h1 {font-size: clamp(1.22rem, 6vw, 1.58rem); line-height: 1.08;}
+        .jr-hero p {margin-top: .3rem; font-size: .78rem; line-height: 1.35;}
         .jr-status-pill {display: none;}
-        .route-sheet-shell {padding: .65rem; border-radius: 18px;}
+        h1 {font-size: 1.65rem;}
+        h2 {font-size: 1.4rem;}
+        h3 {font-size: 1.18rem;}
+        [data-testid="stForm"] {padding: .8rem; border-radius: 16px !important;}
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+            flex-direction: column;
+            gap: .35rem;
+        }
+        [data-testid="stForm"] [data-testid="stColumn"] {
+            width: 100% !important;
+            flex: 1 1 auto !important;
+        }
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+            flex-wrap: wrap;
+            gap: .55rem;
+        }
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"] {
+            min-width: calc(50% - .3rem) !important;
+            flex: 1 1 calc(50% - .3rem) !important;
+        }
+        [data-testid="stTextInput"] input,
+        [data-testid="stNumberInput"] input,
+        [data-testid="stDateInput"] input,
+        [data-baseweb="select"] input {font-size: 16px !important;}
+        .stButton > button, .stDownloadButton > button,
+        [data-testid="stFormSubmitButton"] > button {
+            min-height: 44px;
+            padding-left: .65rem;
+            padding-right: .65rem;
+        }
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+        [data-testid="stTabs"] [data-baseweb="tab-list"]::-webkit-scrollbar {display: none;}
+        [data-testid="stTabs"] [data-baseweb="tab"] {min-width: max-content; min-height: 44px;}
+        [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+            width: 100%;
+            max-width: calc(100vw - 1.3rem);
+            overflow: auto !important;
+            border-radius: 14px;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-x pan-y;
+        }
+        [data-testid="stAlert"] {border-radius: 13px;}
+        .route-sheet-shell {padding: .55rem; border-radius: 17px;}
+        .route-sheet-desktop {display: none;}
+        .route-week-mobile {display: grid; gap: .7rem;}
+        .route-day-card {
+            overflow: hidden;
+            border: 1px solid rgba(7,43,88,.10);
+            border-radius: 15px;
+            background: rgba(255,255,255,.72);
+            box-shadow: 0 8px 22px rgba(7,43,88,.08);
+        }
+        .route-day-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: .7rem;
+            padding: .75rem .8rem;
+            color: #fff;
+            background: linear-gradient(145deg, #0c477f, #082f61);
+        }
+        .route-day-card.alert .route-day-header {background: linear-gradient(145deg, #d22147, #9b1131);}
+        .route-day-name {display: block; font-size: .75rem; font-weight: 820; text-transform: uppercase; letter-spacing: .045em;}
+        .route-day-date {display: block; margin-top: .08rem; font-size: .72rem; opacity: .78;}
+        .route-day-count {
+            flex: 0 0 auto;
+            padding: .28rem .5rem;
+            border: 1px solid rgba(255,255,255,.22);
+            border-radius: 999px;
+            background: rgba(255,255,255,.12);
+            font-size: .68rem;
+            font-weight: 720;
+        }
+        .route-mobile-item {
+            min-height: 44px;
+            padding: .72rem .8rem;
+            color: var(--jr-ink);
+            font-size: .82rem;
+            border-top: 1px solid rgba(7,43,88,.08);
+        }
+        .route-mobile-item:first-child {border-top: 0;}
+        details.route-mobile-item {padding: 0; color: #a30f30; background: rgba(255,226,232,.78); font-weight: 760;}
+        details.route-mobile-item summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 44px;
+            padding: .72rem .8rem;
+            list-style: none;
+        }
+        details.route-mobile-item summary::-webkit-details-marker {display: none;}
+        details.route-mobile-item summary::after {content: "+"; font-size: 1.05rem;}
+        details.route-mobile-item[open] summary::after {content: "−";}
+        details.route-mobile-item .holiday-inline-details {
+            padding: .7rem .8rem;
+            color: #26394f;
+            font-size: .77rem;
+            font-weight: 400;
+            line-height: 1.55;
+            border-top: 1px solid rgba(200,20,56,.22);
+            background: rgba(255,255,255,.72);
+            animation: jr-detail .22s ease-out both;
+        }
+        details.route-mobile-item .holiday-inline-details strong {color: #a30f30;}
+        details.route-mobile-item .holiday-inline-item + .holiday-inline-item {
+            margin-top: .55rem;
+            padding-top: .55rem;
+            border-top: 1px solid rgba(200,20,56,.14);
+        }
+        .route-mobile-empty {padding: .8rem; color: var(--jr-muted); font-size: .8rem; text-align: center;}
+        .holiday-mobile-list {display: grid; gap: .65rem;}
+        .holiday-mobile-card {
+            padding: .85rem;
+            border: 1px solid rgba(255,255,255,.84);
+            border-radius: 16px;
+            background: rgba(255,255,255,.68);
+            box-shadow: 0 10px 26px rgba(7,43,88,.09);
+            backdrop-filter: blur(16px);
+        }
+        .holiday-mobile-date {color: var(--jr-red-dark); font-size: .75rem; font-weight: 820; text-transform: uppercase;}
+        .holiday-mobile-name {margin: .2rem 0 .55rem; color: var(--jr-ink); font-size: .98rem; font-weight: 780;}
+        .holiday-mobile-meta {display: grid; grid-template-columns: 1fr auto; gap: .35rem .7rem; color: var(--jr-muted); font-size: .77rem;}
+        .mobile-table-hint {display: block; margin: .25rem 0 .5rem; color: var(--jr-muted); font-size: .75rem;}
+        .st-key-holiday_table {display: none;}
+        .st-key-week_navigation [data-testid="stHorizontalBlock"] {gap: .35rem; flex-wrap: nowrap;}
+        .st-key-week_navigation [data-testid="stColumn"] {min-width: 0 !important; flex: 1 1 0 !important;}
+        .st-key-week_navigation button {font-size: .72rem; line-height: 1.15;}
+        .st-key-schedule_actions [data-testid="stHorizontalBlock"] {gap: .5rem;}
     }
     @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important;}
@@ -380,28 +534,28 @@ def render_schedule_table(
         match_map.setdefault((match.date, match.route_id), []).append(match)
     max_rows = max((len(schedule.get(day, [])) for day in days), default=0)
     max_rows = max(max_rows, 1)
-    parts = [
+    desktop_parts = [
         (
             '<div class="route-sheet-shell">'
-            '<div class="sheet-caption">Clique em uma célula vermelha para abrir os detalhes do feriado.</div>'
-            '<div class="route-sheet-scroll">'
+            '<div class="sheet-caption">Selecione um item vermelho para abrir os detalhes do feriado.</div>'
+            '<div class="route-sheet-desktop"><div class="route-sheet-scroll">'
         )
     ]
-    parts.append('<table class="route-sheet"><thead><tr>')
+    desktop_parts.append('<table class="route-sheet"><thead><tr>')
     for index, day in enumerate(days):
         alert = any(match.date == day for match in matches)
         class_name = ' class="alert"' if alert else ""
         prefix = "🔴 " if alert else ""
-        parts.append(
+        desktop_parts.append(
             f"<th{class_name}>{prefix}{html.escape(WEEKDAY_NAMES[index])}<br>{day:%d/%m/%Y}</th>"
         )
-    parts.append("</tr></thead><tbody>")
+    desktop_parts.append("</tr></thead><tbody>")
     for row_index in range(max_rows):
-        parts.append("<tr>")
+        desktop_parts.append("<tr>")
         for day in days:
             routes = schedule.get(day, [])
             if row_index >= len(routes):
-                parts.append('<td class="empty">&nbsp;</td>')
+                desktop_parts.append('<td class="empty">&nbsp;</td>')
                 continue
             route = routes[row_index]
             affected = match_map.get((day, route.id), [])
@@ -418,7 +572,7 @@ def render_schedule_table(
                     "</div>"
                     for item in affected
                 )
-                parts.append(
+                desktop_parts.append(
                     f'<td class="alert" title="{html.escape(tooltip, quote=True)}">'
                     '<details class="holiday-cell">'
                     f"<summary>⚠ {html.escape(route.label)}</summary>"
@@ -427,9 +581,69 @@ def render_schedule_table(
                     "</td>"
                 )
             else:
-                parts.append(f"<td>{html.escape(route.label)}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody></table></div></div>")
+                desktop_parts.append(f"<td>{html.escape(route.label)}</td>")
+        desktop_parts.append("</tr>")
+    desktop_parts.append("</tbody></table></div></div>")
+
+    mobile_parts = ['<div class="route-week-mobile">']
+    for index, day in enumerate(days):
+        routes = schedule.get(day, [])
+        day_has_alert = any(match.date == day for match in matches)
+        alert_class = " alert" if day_has_alert else ""
+        route_word = "rota" if len(routes) == 1 else "rotas"
+        mobile_parts.append(
+            f'<section class="route-day-card{alert_class}">'
+            '<header class="route-day-header"><div>'
+            f'<span class="route-day-name">{html.escape(WEEKDAY_NAMES[index])}</span>'
+            f'<span class="route-day-date">{day:%d/%m/%Y}</span>'
+            "</div>"
+            f'<span class="route-day-count">{len(routes)} {route_word}</span>'
+            "</header>"
+        )
+        if not routes:
+            mobile_parts.append(
+                '<div class="route-mobile-empty">Nenhuma rota programada</div>'
+            )
+        for route in routes:
+            affected = match_map.get((day, route.id), [])
+            if not affected:
+                mobile_parts.append(
+                    f'<div class="route-mobile-item">{html.escape(route.label)}</div>'
+                )
+                continue
+            details = "".join(
+                '<div class="holiday-inline-item">'
+                f"<div><strong>Cidade:</strong> {html.escape(item.city)}</div>"
+                f"<div><strong>Feriado:</strong> {html.escape(item.name)}</div>"
+                f"<div><strong>Tipo:</strong> {html.escape(item.holiday_type)}</div>"
+                "</div>"
+                for item in affected
+            )
+            mobile_parts.append(
+                '<details class="route-mobile-item">'
+                f"<summary>⚠ {html.escape(route.label)}</summary>"
+                f'<div class="holiday-inline-details">{details}</div>'
+                "</details>"
+            )
+        mobile_parts.append("</section>")
+    mobile_parts.append("</div></div>")
+    st.markdown("".join([*desktop_parts, *mobile_parts]), unsafe_allow_html=True)
+
+
+def render_holiday_cards(entries: list) -> None:
+    parts = ['<div class="holiday-mobile-list">']
+    for item in entries:
+        parts.append(
+            '<article class="holiday-mobile-card">'
+            f'<div class="holiday-mobile-date">{item.date:%d/%m/%Y} • {html.escape(item.holiday_type)}</div>'
+            f'<div class="holiday-mobile-name">{html.escape(item.holiday_name)}</div>'
+            '<div class="holiday-mobile-meta">'
+            f'<span>{html.escape(item.city)} / {html.escape(item.state)}</span>'
+            f'<span>{html.escape(item.source)}</span>'
+            "</div>"
+            "</article>"
+        )
+    parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 

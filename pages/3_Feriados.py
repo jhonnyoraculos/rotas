@@ -17,6 +17,7 @@ from services.holidays import clear_holiday_memory_cache
 from ui.spreadsheet import (
     LOGO_PATH,
     apply_spreadsheet_style,
+    render_holiday_cards,
     render_page_header,
 )
 from utils.city_normalizer import normalize_text
@@ -83,23 +84,25 @@ if filtered_entries:
     st.caption(
         f"{len(filtered_entries)} feriado(s) encontrado(s) de {len(entries)} armazenado(s) no ano."
     )
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "Data": item.date.strftime("%d/%m/%Y"),
-                    "Cidade": item.city,
-                    "UF": item.state,
-                    "Feriado": item.holiday_name,
-                    "Tipo": item.holiday_type,
-                    "Fonte": item.source,
-                }
-                for item in filtered_entries
-            ]
-        ),
-        hide_index=True,
-        width="stretch",
-    )
+    with st.container(key="holiday_table"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Data": item.date.strftime("%d/%m/%Y"),
+                        "Cidade": item.city,
+                        "UF": item.state,
+                        "Feriado": item.holiday_name,
+                        "Tipo": item.holiday_type,
+                        "Fonte": item.source,
+                    }
+                    for item in filtered_entries
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+    render_holiday_cards(filtered_entries)
 elif entries:
     st.info("Nenhum feriado corresponde aos filtros selecionados.")
 else:

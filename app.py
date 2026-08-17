@@ -57,22 +57,23 @@ if "week_monday" not in st.session_state:
 if "week_search_date" not in st.session_state:
     st.session_state.week_search_date = st.session_state.week_monday
 
-left, center, right, spacer = st.columns([1.2, 0.7, 1.2, 4])
-with left:
-    if st.button("◀ Semana anterior", width="stretch"):
-        st.session_state.week_monday -= timedelta(days=7)
-        st.session_state.week_search_date = st.session_state.week_monday
-        st.rerun()
-with center:
-    if st.button("Hoje", width="stretch"):
-        st.session_state.week_monday = monday_of(today_in_brazil())
-        st.session_state.week_search_date = today_in_brazil()
-        st.rerun()
-with right:
-    if st.button("Próxima semana ▶", width="stretch"):
-        st.session_state.week_monday += timedelta(days=7)
-        st.session_state.week_search_date = st.session_state.week_monday
-        st.rerun()
+with st.container(key="week_navigation"):
+    left, center, right = st.columns(3)
+    with left:
+        if st.button("◀ Anterior", width="stretch"):
+            st.session_state.week_monday -= timedelta(days=7)
+            st.session_state.week_search_date = st.session_state.week_monday
+            st.rerun()
+    with center:
+        if st.button("Hoje", width="stretch"):
+            st.session_state.week_monday = monday_of(today_in_brazil())
+            st.session_state.week_search_date = today_in_brazil()
+            st.rerun()
+    with right:
+        if st.button("Próxima ▶", width="stretch"):
+            st.session_state.week_monday += timedelta(days=7)
+            st.session_state.week_search_date = st.session_state.week_monday
+            st.rerun()
 
 with st.form("week_calendar_search"):
     calendar_col, search_col = st.columns([3, 1], vertical_alignment="bottom")
@@ -148,29 +149,34 @@ else:
 
 render_schedule_table(monday, schedule, matches)
 
-button_col, export_col, _ = st.columns([1.2, 1.6, 4])
-with button_col:
-    if st.button(
-        "Fechar edição" if st.session_state.get("editing") else "Editar escala",
-        width="stretch",
-    ):
-        st.session_state.editing = not st.session_state.get("editing", False)
-        st.rerun()
-with export_col:
-    export_bytes = export_week_to_excel(monday, schedule, matches)
-    st.download_button(
-        "📥 Exportar semana para Excel",
-        data=export_bytes,
-        file_name=f"escala_{monday:%Y-%m-%d}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        width="stretch",
-    )
+with st.container(key="schedule_actions"):
+    button_col, export_col = st.columns(2)
+    with button_col:
+        if st.button(
+            "Fechar edição" if st.session_state.get("editing") else "Editar escala",
+            width="stretch",
+        ):
+            st.session_state.editing = not st.session_state.get("editing", False)
+            st.rerun()
+    with export_col:
+        export_bytes = export_week_to_excel(monday, schedule, matches)
+        st.download_button(
+            "📥 Exportar Excel",
+            data=export_bytes,
+            file_name=f"escala_{monday:%Y-%m-%d}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
 
 if st.session_state.get("editing"):
     st.markdown("#### Editar escala")
     st.caption(
         "Digite ou cole o código (ex.: R.40) ou o nome completo. Linhas vazias são ignoradas; "
         "a ordem das células define a posição no dia."
+    )
+    st.markdown(
+        '<div class="mobile-table-hint">Deslize a tabela para os lados para editar os outros dias.</div>',
+        unsafe_allow_html=True,
     )
     with st.form(f"schedule_form_{monday.isoformat()}"):
         original = schedule_dataframe(monday, schedule)
