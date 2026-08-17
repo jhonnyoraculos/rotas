@@ -465,6 +465,20 @@ def list_holiday_cache(year: int | None = None) -> list[HolidayCache]:
         return list(session.scalars(statement))
 
 
+def list_manual_holiday_cache(year: int) -> list[HolidayCache]:
+    with session_scope() as session:
+        return list(
+            session.scalars(
+                select(HolidayCache)
+                .where(
+                    HolidayCache.year == year,
+                    HolidayCache.source == "manual",
+                )
+                .order_by(HolidayCache.date, HolidayCache.city)
+            )
+        )
+
+
 def add_manual_holiday(
     city: str,
     state: str,

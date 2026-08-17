@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
 import requests
 
 from services.holidays import (
@@ -134,6 +135,35 @@ def test_open_dataset_is_the_default_provider() -> None:
     service = HolidayService(persist=False)
 
     assert isinstance(service.provider, OpenDatasetHolidayProvider)
+
+
+def test_open_dataset_does_not_write_each_city_to_database(monkeypatch) -> None:
+    holiday = Holiday(
+        date(2026, 8, 21),
+        "Feriado Municipal de Teste",
+        "Municipal",
+        "feriados-brasil",
+    )
+    provider = OpenDatasetHolidayProvider()
+    monkeypatch.setattr(
+        provider,
+        "get_holidays",
+        lambda city, state, year, ibge_code=None: ProviderResult(
+            (holiday,), complete=True
+        ),
+    )
+    monkeypatch.setattr(
+        "services.holidays.database.list_manual_holiday_cache", lambda year: []
+    )
+    monkeypatch.setattr(
+        "services.holidays.database.save_online_city_holidays",
+        lambda *args, **kwargs: pytest.fail("não deve gravar o dataset local"),
+    )
+    service = HolidayService(provider=provider, persist=True)
+
+    result = service.city_holidays("Mateus Leme", "MG", 2026, "3140704")
+
+    assert result == [holiday]
 
 
 def test_national_holiday_is_displayed_only_once_for_all_routes() -> None:
