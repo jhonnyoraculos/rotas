@@ -10,6 +10,7 @@ from services.holidays import (
     Holiday,
     HolidayProvider,
     HolidayService,
+    OpenDatasetHolidayProvider,
     ProviderResult,
 )
 
@@ -105,3 +106,29 @@ def test_provider_stops_after_rejected_key(monkeypatch) -> None:
     assert service.warnings == {
         "A FERIADOS_API_KEY foi recusada. Copie novamente o token do painel do provedor."
     }
+
+
+def test_open_dataset_provider_filters_by_ibge_code(monkeypatch) -> None:
+    holiday = Holiday(
+        date(2026, 8, 21),
+        "Feriado Municipal de Teste",
+        "Municipal",
+        "feriados-brasil",
+    )
+    monkeypatch.setattr(
+        "services.holidays._fetch_open_dataset_year",
+        lambda year: {"3140704": (holiday,)},
+    )
+
+    result = OpenDatasetHolidayProvider().get_holidays(
+        "Mateus Leme", "MG", 2026, "3140704"
+    )
+
+    assert result.complete
+    assert result.holidays == (holiday,)
+
+
+def test_open_dataset_is_the_default_provider() -> None:
+    service = HolidayService(persist=False)
+
+    assert isinstance(service.provider, OpenDatasetHolidayProvider)

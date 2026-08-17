@@ -86,12 +86,11 @@ else:
 
 st.markdown("### Segredos")
 st.code(
-    'DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"\n'
-    'FERIADOS_API_KEY = "sua_chave"',
+    'DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"',
     language="toml",
 )
 st.caption(
     "Salve em .streamlit/secrets.toml localmente ou configure os mesmos nomes nos segredos "
-    "do Streamlit Community Cloud. Em FERIADOS_API_KEY, cole somente o token, sem escrever "
-    "'Bearer'. Nunca envie esse arquivo ao Git."
+    "do Streamlit Community Cloud. O provedor gratuito de feriados municipais não exige "
+    "token. Nunca envie os segredos ao Git."
 )

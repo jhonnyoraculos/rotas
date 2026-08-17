@@ -30,10 +30,9 @@ Crie `.streamlit/secrets.toml` (o arquivo já está ignorado pelo Git):
 
 ```toml
 DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"
-FERIADOS_API_KEY = "sua_chave"
 ```
 
-`DATABASE_URL` é opcional no desenvolvimento: sem ela, a aplicação cria `data/rotas.db`. A chave municipal é necessária para consultar cidades do interior pelo provedor configurado. Sem a chave, a aplicação continua disponível com feriados gerais, valores já armazenados e cadastros manuais, e informa que a cobertura municipal é parcial.
+`DATABASE_URL` é opcional no desenvolvimento: sem ela, a aplicação cria `data/rotas.db`. O provedor municipal padrão usa o dataset aberto `joaopbini/feriados-brasil` e não exige conta, token ou plano pago.
 
 ## Importação inicial
 
@@ -72,15 +71,23 @@ O teste principal cria a rota R.40 com Itaúna, Mateus Leme e Juatuba e confirma
 
 - municípios e códigos oficiais: API de Localidades do IBGE;
 - feriados nacionais online: BrasilAPI;
-- feriados municipais: Feriados API por código IBGE (`FERIADOS_API_KEY`);
+- feriados municipais: dataset aberto [feriados-brasil](https://github.com/joaopbini/feriados-brasil), por código IBGE, incluído localmente para 2026 e com cache anual;
 - fallback nacional/estadual offline: pacote `holidays`;
 - fallback municipal operacional: cache PostgreSQL e cadastro manual.
 
-O provedor municipal implementa `HolidayProvider`, portanto pode ser trocado sem alterar a lógica de associação das rotas.
+O dataset aberto é distribuído sob licença MIT, mas pode conter nomes genéricos ou lacunas. O cadastro manual permite corrigir exceções. O provedor implementa `HolidayProvider`, portanto pode ser trocado sem alterar a lógica de associação das rotas.
+
+Para atualizar ou incluir outro ano no repositório:
+
+```powershell
+python -m scripts.sync_holiday_dataset 2027
+```
+
+Os avisos de licença estão em `THIRD_PARTY_NOTICES.md`.
 
 ## Deploy no Streamlit Community Cloud
 
 1. Publique o repositório sem `.streamlit/secrets.toml` e sem a planilha real, caso ela seja confidencial.
-2. Cadastre `DATABASE_URL` e `FERIADOS_API_KEY` na área de segredos do aplicativo.
+2. Cadastre somente `DATABASE_URL` na área de segredos do aplicativo.
 3. Defina `app.py` como arquivo principal.
 4. Faça a primeira importação na página **Configurações**.
