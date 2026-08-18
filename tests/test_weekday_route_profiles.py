@@ -95,6 +95,7 @@ def test_route_matrix_save_updates_profiles_and_current_week(
                 "DIVINOPOLIS (R.10)",
                 "ITAUNA (R.40)",
                 "ITAUNA",
+                "!SAO ROQUE DE MINAS CONDICAO",
                 "MATEUS LEME",
             ],
             1: [
@@ -137,3 +138,7 @@ def test_route_matrix_save_updates_profiles_and_current_week(
         if profile.weekday == 1
         for city in profile.cities
     ] == ["ITAUNA", "AZURITA"]
+
+    saved_matrix = database.saved_route_matrix_columns()
+    assert saved_matrix is not None
+    assert "!SAO ROQUE DE MINAS CONDICAO" in saved_matrix[0]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ from services.database import (
     initialize_database,
     list_route_weekday_profiles,
     replace_weekday_route_matrix,
+    saved_route_matrix_columns,
 )
 from services.excel_importer import import_weekday_profiles
 from ui.spreadsheet import (
@@ -18,7 +20,9 @@ from ui.spreadsheet import (
     apply_spreadsheet_style,
     render_page_header,
 )
+from utils.city_normalizer import normalize_text
 from utils.dates import monday_of, today_in_brazil
+from utils.route_parser import extract_route_code
 
 DAY_LABELS = (
     "SEGUNDA - FEIRA",
@@ -27,6 +31,42 @@ DAY_LABELS = (
     "QUINTA - FEIRA",
     "SEXTA - FEIRA",
 )
+
+
+def _display_cell(value: object) -> str:
+    text = "" if value is None or pd.isna(value) else str(value).strip()
+    return text.lstrip("!* ").strip()
+
+
+def _cell_class(value: object) -> str:
+    text = "" if value is None or pd.isna(value) else str(value).strip()
+    display = _display_cell(text)
+    normalized = normalize_text(display)
+    if not display:
+        return "empty"
+    if text.startswith("!") or "CONDICAO" in normalized:
+        return "matrix-condition"
+    if (
+        text.startswith("*")
+        or extract_route_code(display)
+        or normalized.startswith("EXTRA ")
+        or "REGIAO" in normalized
+    ):
+        return "matrix-route"
+    return ""
+
+
+def _columns_dataframe(columns: dict[int, list[str]]) -> pd.DataFrame:
+    data = {
+        DAY_LABELS[weekday]: list(columns.get(weekday, []))
+        for weekday in range(5)
+    }
+    max_rows = max((len(values) for values in data.values()), default=0)
+    max_rows = max(max_rows + 8, 18)
+    for label, values in data.items():
+        values.extend([""] * (max_rows - len(values)))
+        data[label] = values
+    return pd.DataFrame(data)
 
 
 def _matrix_dataframe(profiles: list) -> pd.DataFrame:
@@ -60,6 +100,29 @@ def _edited_columns(dataframe: pd.DataFrame) -> dict[int, list[str]]:
             for value in dataframe[label].tolist()
         ]
     return result
+
+
+def _render_matrix_preview(dataframe: pd.DataFrame) -> None:
+    parts = [
+        '<div class="route-sheet-shell route-matrix-preview">',
+        '<div class="route-sheet-desktop"><div class="route-sheet-scroll">',
+        '<table class="route-sheet matrix-sheet"><thead><tr>',
+    ]
+    for label in DAY_LABELS:
+        parts.append(f"<th>{html.escape(label)}</th>")
+    parts.append("</tr></thead><tbody>")
+    for _, row in dataframe.iterrows():
+        parts.append("<tr>")
+        for label in DAY_LABELS:
+            raw_value = row[label]
+            display = _display_cell(raw_value)
+            class_name = _cell_class(raw_value)
+            class_attr = f' class="{class_name}"' if class_name else ""
+            content = html.escape(display) if display else "&nbsp;"
+            parts.append(f"<td{class_attr}>{content}</td>")
+        parts.append("</tr>")
+    parts.append("</tbody></table></div></div></div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 st.set_page_config(
@@ -97,7 +160,12 @@ if save_notice:
     st.success(save_notice)
 
 profiles = list_route_weekday_profiles()
-matrix = _matrix_dataframe(profiles)
+saved_columns = saved_route_matrix_columns()
+matrix = (
+    _columns_dataframe(saved_columns)
+    if saved_columns is not None
+    else _matrix_dataframe(profiles)
+)
 unique_routes = {
     profile.route.code
     for profile in profiles
@@ -146,6 +214,8 @@ if save_matrix:
         st.error(f"Nao foi possivel salvar a matriz: {error}")
 
 st.caption(
-    "Linhas com codigo no formato R.10, R.40 ou R.600 viram rotas. "
-    "As linhas abaixo de cada rota viram as cidades daquele dia."
+    "R.xxx fica como rota. CONDICAO ou ! no inicio fica vermelho. "
+    "* no inicio fica em negrito na visualizacao."
 )
+
+_render_matrix_preview(matrix)
