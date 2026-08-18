@@ -222,6 +222,15 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
     return rows, auto_filled
 
 
+def _auto_resolve_missing_city_codes(dataframe: pd.DataFrame) -> int:
+    resolved_rows, auto_filled = _city_registry_rows(dataframe)
+    if auto_filled:
+        save_city_registry(
+            [row for row in resolved_rows if str(row.get("ibge_code") or "").strip()]
+        )
+    return auto_filled
+
+
 st.set_page_config(
     page_title="Informacoes das Rotas",
     page_icon=str(LOGO_PATH),
@@ -355,6 +364,13 @@ else:
         },
         key="city_registry_editor",
     )
+    auto_filled_now = _auto_resolve_missing_city_codes(edited_cities)
+    if auto_filled_now:
+        st.session_state.pop("weekly_holiday_results", None)
+        st.session_state.route_matrix_save_notice = (
+            f"{auto_filled_now} codigo(s) IBGE preenchido(s) automaticamente."
+        )
+        st.rerun()
     if st.button("Salvar cidades e codigos", type="primary"):
         try:
             resolved_rows, auto_filled = _city_registry_rows(edited_cities)
