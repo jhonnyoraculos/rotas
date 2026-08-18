@@ -291,6 +291,21 @@ SPREADSHEET_CSS = """
     .route-sheet td {height: 36px; background: rgba(255,255,255,.74); transition: background .18s ease;}
     .route-sheet tr:hover td {background: rgba(235, 245, 255, .91);}
     .route-sheet td.alert {background: linear-gradient(115deg, rgba(255,220,227,.96), rgba(255,239,242,.92)); color: #a30f30; font-weight: 760; cursor: pointer; padding: 0;}
+    .matrix-sheet {font-size: 12px; color: #0f233d;}
+    .matrix-sheet th {font-size: 14px; line-height: 1.05; padding: 5px 8px;}
+    .matrix-sheet td {height: 20px; padding: 2px 6px; background: rgba(255,255,255,.84);}
+    .matrix-sheet td.matrix-route {
+        color: #050b14;
+        font-weight: 850;
+        text-align: center;
+        background: rgba(255,255,255,.92);
+    }
+    .matrix-sheet td.matrix-condition {
+        color: #e00000;
+        font-weight: 520;
+        background: rgba(255,255,255,.90);
+    }
+    .route-matrix-preview {margin-top: 1rem;}
     .route-sheet details.holiday-cell summary {display: flex; align-items: center; justify-content: space-between; gap: 8px; color: inherit; padding: 7px 9px; list-style: none;}
     .route-sheet details.holiday-cell summary::-webkit-details-marker {display: none;}
     .route-sheet details.holiday-cell summary::after {content: "+"; flex: 0 0 auto; font-size: 16px; font-weight: 850; line-height: 1;}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -40,6 +41,7 @@ from utils.route_parser import (
 )
 
 _SCHEMA_LOCK_KEY = 82726010422026
+_ROUTE_MATRIX_KEY = "route_weekday_matrix_columns"
 
 
 def _streamlit_secret(name: str) -> str | None:
@@ -287,6 +289,43 @@ def _clean_matrix_cell(value: object) -> str:
     return " ".join(str(value).split()).strip()
 
 
+def _matrix_cell_value(value: object) -> str:
+    text_value = _clean_matrix_cell(value)
+    return text_value.lstrip("!* ").strip()
+
+
+def _save_route_matrix_columns(
+    session: Session, columns: dict[int, Sequence[object]]
+) -> None:
+    payload = {
+        str(weekday): [_clean_matrix_cell(value) for value in columns.get(weekday, [])]
+        for weekday in range(5)
+    }
+    setting = session.get(AppSetting, _ROUTE_MATRIX_KEY)
+    if setting is None:
+        session.add(AppSetting(key=_ROUTE_MATRIX_KEY, value=json.dumps(payload)))
+    else:
+        setting.value = json.dumps(payload)
+
+
+def saved_route_matrix_columns() -> dict[int, list[str]] | None:
+    with session_scope() as session:
+        setting = session.get(AppSetting, _ROUTE_MATRIX_KEY)
+        if setting is None or not setting.value:
+            return None
+        try:
+            payload = json.loads(setting.value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+    return {
+        weekday: [
+            _clean_matrix_cell(value)
+            for value in payload.get(str(weekday), [])
+        ]
+        for weekday in range(5)
+    }
+
+
 def _resolve_matrix_city(
     original: str,
     state: str,
@@ -321,7 +360,7 @@ def _weekday_blocks_from_columns(
         current: dict | None = None
         blocks_by_code: dict[str, dict] = {}
         for raw_value in columns.get(weekday, []):
-            value = _clean_matrix_cell(raw_value)
+            value = _matrix_cell_value(raw_value)
             if not value:
                 continue
             code = extract_route_code(value)
@@ -345,6 +384,8 @@ def _weekday_blocks_from_columns(
             normalized = normalize_text(value)
             if normalized.startswith(("EXTRA BH", "COLETA ")):
                 current = None
+                continue
+            if _clean_matrix_cell(raw_value).startswith("!") or "CONDICAO" in normalized:
                 continue
             if normalized and all(
                 normalize_text(existing) != normalized
@@ -491,6 +532,7 @@ def replace_weekday_route_matrix(
         municipalities = None
 
     with session_scope() as session:
+        _save_route_matrix_columns(session, columns)
         existing_routes = list(
             session.scalars(select(Route).options(selectinload(Route.cities))).unique()
         )
