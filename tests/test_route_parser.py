@@ -132,6 +132,22 @@ def test_ibge_code_is_not_guessed_for_a_different_name() -> None:
     assert result == ("São Sebastião Oeste", "MG", "")
 
 
+def test_missing_ibge_code_falls_back_to_original_city() -> None:
+    municipalities = (
+        Municipality("Carmo da Cachoeira", "MG", "3113908"),
+    )
+
+    result = resolve_municipality_fields(
+        "CARMO DA CACHOEIRA",
+        "Carmo do Cachoeira",
+        "MG",
+        "",
+        municipalities,
+    )
+
+    assert result == ("Carmo da Cachoeira", "MG", "3113908")
+
+
 def test_route_name_is_included_when_it_is_an_official_municipality(
     monkeypatch,
 ) -> None:

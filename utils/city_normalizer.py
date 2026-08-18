@@ -80,14 +80,24 @@ def resolve_municipality_fields(
     if current_code:
         return official_name, normalized_state, current_code
 
-    candidate = official_name or str(city_original or "").strip()
-    if not candidate:
+    candidates = [
+        value
+        for value in (official_name, str(city_original or "").strip())
+        if value
+    ]
+    if not candidates:
         return official_name, normalized_state, current_code
-    municipality = identify_municipality(
-        candidate,
-        normalized_state,
-        municipalities,
-    )
-    if municipality is None:
-        return official_name, normalized_state, current_code
-    return municipality.name, municipality.state, municipality.ibge_code
+    seen_candidates: set[str] = set()
+    for candidate in candidates:
+        normalized_candidate = normalize_text(candidate)
+        if normalized_candidate in seen_candidates:
+            continue
+        seen_candidates.add(normalized_candidate)
+        municipality = identify_municipality(
+            candidate,
+            normalized_state,
+            municipalities,
+        )
+        if municipality is not None:
+            return municipality.name, municipality.state, municipality.ibge_code
+    return official_name, normalized_state, current_code
