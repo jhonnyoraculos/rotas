@@ -21,6 +21,8 @@ from models import (
     HolidaySyncStatus,
     Route,
     RouteCity,
+    RouteWeekdayCity,
+    RouteWeekdayProfile,
     RouteWeekdayTemplate,
     WeeklySchedule,
 )
@@ -125,6 +127,33 @@ def get_route(route_id: int) -> Route | None:
         )
 
 
+def count_route_weekday_profiles() -> int:
+    with session_scope() as session:
+        return int(
+            session.scalar(select(func.count(RouteWeekdayProfile.id))) or 0
+        )
+
+
+def list_route_weekday_profiles(
+    route_id: int | None = None,
+) -> list[RouteWeekdayProfile]:
+    with session_scope() as session:
+        statement = (
+            select(RouteWeekdayProfile)
+            .options(
+                joinedload(RouteWeekdayProfile.route),
+                selectinload(RouteWeekdayProfile.cities),
+            )
+            .order_by(
+                RouteWeekdayProfile.weekday,
+                RouteWeekdayProfile.position,
+            )
+        )
+        if route_id is not None:
+            statement = statement.where(RouteWeekdayProfile.route_id == route_id)
+        return list(session.scalars(statement).unique())
+
+
 def save_route(
     route_id: int | None, code: str, name: str, active: bool = True
 ) -> Route:
@@ -214,6 +243,138 @@ def resolve_route_city(
         item.needs_review = False
 
 
+def _route_city_dict(city: RouteCity) -> dict:
+    return {
+        "city_original": city.city_original,
+        "municipality_name": city.municipality_name,
+        "state": city.state,
+        "ibge_code": city.ibge_code,
+        "needs_review": city.needs_review,
+    }
+
+
+def _weekday_city_rows(route_item: dict, profile_item: dict) -> list[dict]:
+    global_rows = list(route_item.get("cities") or [])
+    source_cities = list(profile_item.get("cities") or [])
+    normalized_name = normalize_text(profile_item.get("name"))
+    route_city = next(
+        (
+            row
+            for row in global_rows
+            if normalized_name
+            in {
+                normalize_text(row.get("city_original")),
+                normalize_text(row.get("municipality_name")),
+            }
+        ),
+        None,
+    )
+    if route_city and all(
+        normalize_text(city) != normalize_text(route_city["city_original"])
+        for city in source_cities
+    ):
+        source_cities.insert(0, route_city["city_original"])
+
+    global_by_name: dict[str, dict] = {}
+    for row in global_rows:
+        for value in (row.get("city_original"), row.get("municipality_name")):
+            normalized = normalize_text(value)
+            if normalized:
+                global_by_name.setdefault(normalized, row)
+
+    result: list[dict] = []
+    seen: set[str] = set()
+    for city in source_cities:
+        original = " ".join(str(city or "").split()).strip()
+        normalized = normalize_text(original)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        matched = global_by_name.get(normalized, {})
+        result.append(
+            {
+                "city_original": original,
+                "municipality_name": matched.get("municipality_name"),
+                "state": matched.get("state", "MG"),
+                "ibge_code": matched.get("ibge_code"),
+                "needs_review": matched.get("needs_review", True),
+            }
+        )
+    return result
+
+
+def _replace_weekday_profiles_in_session(
+    session: Session,
+    routes: dict[str, dict],
+    route_by_code: dict[str, Route],
+    schedule: dict[int, list[str]],
+) -> None:
+    session.execute(delete(RouteWeekdayCity))
+    session.execute(delete(RouteWeekdayProfile))
+    for weekday in range(5):
+        scheduled_codes = list(schedule.get(weekday, []))
+        detail_codes = [
+            code
+            for code, item in routes.items()
+            if weekday in item.get("weekdays", {})
+        ]
+        ordered_codes = [*scheduled_codes]
+        ordered_codes.extend(code for code in detail_codes if code not in ordered_codes)
+        for position, code in enumerate(ordered_codes):
+            route = route_by_code.get(code)
+            route_item = routes.get(code)
+            if route is None or route_item is None:
+                continue
+            profile_item = route_item.get("weekdays", {}).get(weekday)
+            if profile_item is None:
+                continue
+            profile = RouteWeekdayProfile(
+                weekday=weekday,
+                route_id=route.id,
+                display_name=profile_item.get("name") or route.name,
+                position=position,
+            )
+            session.add(profile)
+            session.flush()
+            for city_position, city in enumerate(
+                _weekday_city_rows(route_item, profile_item)
+            ):
+                session.add(
+                    RouteWeekdayCity(
+                        profile_id=profile.id,
+                        city_original=city["city_original"],
+                        municipality_name=city.get("municipality_name"),
+                        normalized_city=normalize_text(city["city_original"]),
+                        state=city.get("state", "MG"),
+                        ibge_code=city.get("ibge_code"),
+                        needs_review=city.get("needs_review", True),
+                        position=city_position,
+                    )
+                )
+
+
+def replace_route_weekday_profiles(
+    routes: dict[str, dict], schedule: dict[int, list[str]]
+) -> None:
+    with session_scope() as session:
+        existing_routes = list(
+            session.scalars(select(Route).options(selectinload(Route.cities))).unique()
+        )
+        route_by_code = {route.code: route for route in existing_routes}
+        enriched: dict[str, dict] = {}
+        for code, item in routes.items():
+            route = route_by_code.get(code)
+            if route is None:
+                continue
+            enriched[code] = {
+                **item,
+                "cities": [_route_city_dict(city) for city in route.cities],
+            }
+        _replace_weekday_profiles_in_session(
+            session, enriched, route_by_code, schedule
+        )
+
+
 def import_snapshot(
     routes: dict[str, dict], schedule: dict[int, list[str]], monday: date
 ) -> None:
@@ -259,6 +420,9 @@ def import_snapshot(
                         )
                     )
 
+        _replace_weekday_profiles_in_session(
+            session, routes, route_by_code, schedule
+        )
         session.execute(delete(RouteWeekdayTemplate))
         session.execute(delete(WeeklySchedule).where(WeeklySchedule.date.in_(days)))
         for weekday, codes in schedule.items():
@@ -317,7 +481,12 @@ def load_week_schedule(monday: date) -> dict[date, list[Route]]:
             session.scalars(
                 select(WeeklySchedule)
                 .where(WeeklySchedule.date.in_(days))
-                .options(joinedload(WeeklySchedule.route).selectinload(Route.cities))
+                .options(
+                    joinedload(WeeklySchedule.route).selectinload(Route.cities),
+                    joinedload(WeeklySchedule.route)
+                    .selectinload(Route.weekday_profiles)
+                    .selectinload(RouteWeekdayProfile.cities),
+                )
                 .order_by(WeeklySchedule.date, WeeklySchedule.position)
             ).unique()
         )

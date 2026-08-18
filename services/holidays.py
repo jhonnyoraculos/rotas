@@ -430,7 +430,20 @@ class HolidayService:
                     )
                     self._append_match(matches, seen, day, route, city_label, item)
 
-                for route_city in route.cities:
+                weekday_profile = next(
+                    (
+                        profile
+                        for profile in getattr(route, "weekday_profiles", ())
+                        if profile.weekday == day.weekday()
+                    ),
+                    None,
+                )
+                route_cities = (
+                    weekday_profile.cities
+                    if weekday_profile is not None
+                    else route.cities
+                )
+                for route_city in route_cities:
                     city = route_city.holiday_city
                     for item in self.city_holidays(
                         city, route_city.state, day.year, route_city.ibge_code

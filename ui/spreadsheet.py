@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from utils.city_normalizer import normalize_text
 from utils.dates import WEEKDAY_NAMES, business_week
 
 SPREADSHEET_CSS = """
@@ -303,6 +304,35 @@ SPREADSHEET_CSS = """
     .sheet-caption {color: var(--jr-muted); font-size: 13px; margin: 0 0 .75rem;}
     .mobile-table-hint {display: none;}
     .holiday-mobile-list {display: none;}
+    .route-info-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: .75rem;
+        align-items: start;
+    }
+    .route-info-card {
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,.84);
+        border-radius: 18px;
+        background: rgba(255,255,255,.64);
+        box-shadow: 0 14px 34px rgba(7,43,88,.10);
+        backdrop-filter: blur(18px) saturate(145%);
+    }
+    .route-info-card.is-empty {opacity: .68;}
+    .route-info-header {
+        min-height: 92px;
+        padding: .8rem;
+        color: #fff;
+        background: linear-gradient(145deg, #0c477f, #082f61);
+    }
+    .route-info-day {font-size: .7rem; font-weight: 820; letter-spacing: .07em; text-transform: uppercase; opacity: .78;}
+    .route-info-name {margin-top: .28rem; font-size: .82rem; font-weight: 790; line-height: 1.25;}
+    .route-info-count {margin-top: .3rem; font-size: .68rem; opacity: .72;}
+    .route-info-cities {margin: 0; padding: 0; list-style: none;}
+    .route-info-city {padding: .62rem .7rem; color: var(--jr-ink); font-size: .76rem; line-height: 1.3; border-top: 1px solid rgba(7,43,88,.08);}
+    .route-info-city:first-child {border-top: 0;}
+    .route-info-official {display: block; margin-top: .16rem; color: var(--jr-muted); font-size: .65rem;}
+    .route-info-empty {padding: 1rem .7rem; color: var(--jr-muted); font-size: .74rem; text-align: center;}
     @keyframes jr-rise {from {opacity: 0; transform: translateY(12px) scale(.992);} to {opacity: 1; transform: translateY(0) scale(1);}}
     @keyframes jr-detail {from {opacity: 0; transform: translateY(-4px);} to {opacity: 1; transform: translateY(0);}}
     @keyframes jr-float {from {transform: translate3d(0,0,0) scale(1);} to {transform: translate3d(-25px,28px,0) scale(1.08);}}
@@ -455,6 +485,10 @@ SPREADSHEET_CSS = """
         .holiday-mobile-date {color: var(--jr-red-dark); font-size: .75rem; font-weight: 820; text-transform: uppercase;}
         .holiday-mobile-name {margin: .2rem 0 .55rem; color: var(--jr-ink); font-size: .98rem; font-weight: 780;}
         .holiday-mobile-meta {display: grid; grid-template-columns: 1fr auto; gap: .35rem .7rem; color: var(--jr-muted); font-size: .77rem;}
+        .route-info-grid {grid-template-columns: 1fr; gap: .7rem;}
+        .route-info-header {min-height: 0; padding: .75rem .8rem;}
+        .route-info-name {font-size: .88rem;}
+        .route-info-city {min-height: 42px; padding: .7rem .8rem; font-size: .8rem;}
         .mobile-table-hint {display: block; margin: .25rem 0 .5rem; color: var(--jr-muted); font-size: .75rem;}
         .st-key-holiday_table {display: none;}
         .st-key-week_navigation [data-testid="stHorizontalBlock"] {gap: .35rem; flex-wrap: nowrap;}
@@ -483,6 +517,7 @@ def apply_spreadsheet_style(active_page: str = "schedule") -> None:
     st.markdown(SPREADSHEET_CSS, unsafe_allow_html=True)
     links = (
         ("schedule", "./", "▦", "Escala semanal"),
+        ("route_info", "./Informacoes_de_Rotas", "☷", "Informações das rotas"),
         ("routes", "./Cadastro_de_Rotas", "⇆", "Cadastro de rotas"),
         ("holidays", "./Feriados", "◈", "Feriados"),
         ("settings", "./Configuracoes", "⚙", "Configurações"),
@@ -645,6 +680,57 @@ def render_holiday_cards(entries: list) -> None:
             "</div>"
             "</article>"
         )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def render_route_weekday_profiles(route, profiles: list) -> None:
+    profile_by_weekday = {profile.weekday: profile for profile in profiles}
+    parts = ['<div class="route-info-grid">']
+    for weekday, weekday_name in enumerate(WEEKDAY_NAMES):
+        profile = profile_by_weekday.get(weekday)
+        if profile is None:
+            parts.append(
+                '<section class="route-info-card is-empty">'
+                '<header class="route-info-header">'
+                f'<div class="route-info-day">{html.escape(weekday_name)}</div>'
+                f'<div class="route-info-name">{html.escape(route.label)}</div>'
+                "</header>"
+                '<div class="route-info-empty">Rota não programada neste dia</div>'
+                "</section>"
+            )
+            continue
+        city_word = "cidade" if len(profile.cities) == 1 else "cidades"
+        parts.append(
+            '<section class="route-info-card">'
+            '<header class="route-info-header">'
+            f'<div class="route-info-day">{html.escape(weekday_name)}</div>'
+            f'<div class="route-info-name">{html.escape(profile.label)}</div>'
+            f'<div class="route-info-count">{len(profile.cities)} {city_word}</div>'
+            "</header>"
+        )
+        if not profile.cities:
+            parts.append(
+                '<div class="route-info-empty">Nenhuma cidade informada na planilha</div>'
+            )
+        else:
+            parts.append('<ul class="route-info-cities">')
+            for city in profile.cities:
+                official = ""
+                if city.municipality_name and normalize_text(
+                    city.municipality_name
+                ) != normalize_text(city.city_original):
+                    official = (
+                        '<span class="route-info-official">Município: '
+                        f"{html.escape(city.municipality_name)} / {html.escape(city.state)}"
+                        "</span>"
+                    )
+                parts.append(
+                    '<li class="route-info-city">'
+                    f"{html.escape(city.city_original)}{official}</li>"
+                )
+            parts.append("</ul>")
+        parts.append("</section>")
     parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
 

@@ -47,6 +47,30 @@ def sample_workbook() -> BytesIO:
     return stream
 
 
+def weekday_city_workbook() -> BytesIO:
+    workbook = Workbook()
+    schedule = workbook.active
+    schedule.title = "CARREGAMENTOS ATUALIZADOS"
+    schedule.append(
+        ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira"]
+    )
+    schedule.append(["ITAÚNA (R.40)"] * 5)
+
+    cities = workbook.create_sheet("CIDADES X ROTAS ATUALIZADAS")
+    cities.append(
+        ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira"]
+    )
+    cities.append(["ITAÚNA (R.40)"] * 5)
+    cities.append(["MATEUS LEME", "AZURITA", "JUATUBA", "ITAÚNA", "MATEUS LEME"])
+    cities.append(["JUATUBA", "MATEUS LEME", "AZURITA", None, "AZURITA"])
+    cities.append(["PARÁ DE MINAS (R.41)"] * 5)
+
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+    return stream
+
+
 def test_parser_understands_schedule_and_route_city_blocks() -> None:
     analysis = analyze_workbook(sample_workbook())
 
@@ -55,6 +79,20 @@ def test_parser_understands_schedule_and_route_city_blocks() -> None:
     assert analysis.routes["R.40"].cities == ["ITAÚNA", "MATEUS LEME", "JUATUBA"]
     assert analysis.routes["R.41"].cities == ["PARA DE MINAS"]
     assert "R.401" in analysis.routes
+
+
+def test_parser_preserves_different_cities_for_each_weekday() -> None:
+    analysis = analyze_workbook(weekday_city_workbook())
+
+    assert analysis.weekday_routes[0]["R.40"].cities == [
+        "MATEUS LEME",
+        "JUATUBA",
+    ]
+    assert analysis.weekday_routes[1]["R.40"].cities == [
+        "AZURITA",
+        "MATEUS LEME",
+    ]
+    assert analysis.weekday_routes[3]["R.40"].cities == ["ITAÚNA"]
 
 
 def test_route_regex_and_accent_normalization() -> None:
