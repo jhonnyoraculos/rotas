@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from services import database
-from utils.city_normalizer import Municipality
+from utils.city_normalizer import Municipality, resolve_municipality_fields
 
 
 def test_import_keeps_route_cities_separated_by_weekday(
@@ -83,6 +83,7 @@ def test_route_matrix_save_updates_profiles_and_current_week(
         database,
         "fetch_state_municipalities",
         lambda state: (
+            Municipality("Araxa", "MG", "3104007"),
             Municipality("Divinopolis", "MG", "3122306"),
             Municipality("Itauna", "MG", "3133808"),
             Municipality("Mateus Leme", "MG", "3140704"),
@@ -169,3 +170,11 @@ def test_route_matrix_save_updates_profiles_and_current_week(
     assert tuesday_azurita.municipality_name == "Mateus Leme"
     assert tuesday_azurita.ibge_code == "3140704"
     assert not tuesday_azurita.needs_review
+
+    assert resolve_municipality_fields(
+        "ARAXA- CONDICOES",
+        "Araxa",
+        "MG",
+        "",
+        (Municipality("Araxa", "MG", "3104007"),),
+    ) == ("Araxa", "MG", "3104007")
