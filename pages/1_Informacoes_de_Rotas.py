@@ -222,11 +222,19 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
     return rows, auto_filled
 
 
-def _auto_resolve_missing_city_codes(dataframe: pd.DataFrame) -> int:
+def _resolve_and_save_city_registry(dataframe: pd.DataFrame) -> int:
     resolved_rows, auto_filled = _city_registry_rows(dataframe)
-    if auto_filled:
-        save_city_registry(resolved_rows)
+    # O botao tambem confirma edicoes manuais. Salvar somente quando um codigo
+    # era encontrado fazia municipio, localidade e codigo digitados voltarem ao
+    # valor anterior depois do rerun do Streamlit.
+    save_city_registry(resolved_rows)
     return auto_filled
+
+
+def _advance_city_registry_editor() -> None:
+    st.session_state.city_registry_editor_version = (
+        st.session_state.get("city_registry_editor_version", 0) + 1
+    )
 
 
 st.set_page_config(
@@ -347,6 +355,14 @@ if not city_rows:
     st.info("Salve a matriz para carregar as cidades aqui.")
 else:
     city_registry = _city_registry_dataframe(city_rows)
+    editor_version = st.session_state.get("city_registry_editor_version", 0)
+    editor_key = f"city_registry_editor_data_{editor_version}"
+    for state_key in list(st.session_state):
+        if (
+            state_key.startswith("city_registry_editor_data_")
+            and state_key != editor_key
+        ):
+            st.session_state.pop(state_key, None)
     edited_cities = st.data_editor(
         city_registry,
         hide_index=True,
@@ -360,7 +376,7 @@ else:
             "Codigo IBGE": st.column_config.TextColumn(width="small"),
             "Pendente": st.column_config.CheckboxColumn(width="small"),
         },
-        key="city_registry_editor",
+        key=editor_key,
     )
     load_codes_col, save_codes_col = st.columns([1, 1])
     with load_codes_col:
@@ -370,13 +386,17 @@ else:
 
     if load_codes:
         try:
-            auto_filled_now = _auto_resolve_missing_city_codes(edited_cities)
+            auto_filled_now = _resolve_and_save_city_registry(edited_cities)
             st.session_state.pop("weekly_holiday_results", None)
             st.session_state.route_matrix_save_notice = (
                 f"{auto_filled_now} codigo(s) IBGE preenchido(s)."
                 if auto_filled_now
-                else "Nenhum codigo IBGE encontrado automaticamente."
+                else (
+                    "Alteracoes salvas. Nenhum novo codigo IBGE foi encontrado "
+                    "automaticamente."
+                )
             )
+            _advance_city_registry_editor()
             st.rerun()
         except (ValueError, IntegrityError) as error:
             st.error(f"Nao foi possivel carregar os codigos: {error}")
@@ -390,6 +410,7 @@ else:
             if auto_filled:
                 message += f" {auto_filled} codigo(s) preenchido(s) automaticamente."
             st.session_state.route_matrix_save_notice = message
+            _advance_city_registry_editor()
             st.rerun()
         except (ValueError, IntegrityError) as error:
             st.error(f"Nao foi possivel salvar as cidades: {error}")
