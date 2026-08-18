@@ -201,3 +201,73 @@ def test_route_matrix_save_updates_profiles_and_current_week(
         "",
         (Municipality("Araxa", "MG", "3104007"),),
     ) == ("Araxa", "MG", "3104007")
+
+
+def test_city_registry_merge_prevents_duplicate_city_keys(
+    monkeypatch, tmp_path
+) -> None:
+    url = f"sqlite:///{tmp_path / 'merge-city-registry.db'}"
+    database.initialize_database(url)
+    original_session_scope = database.session_scope
+    monkeypatch.setattr(
+        database,
+        "session_scope",
+        lambda: original_session_scope(url),
+    )
+
+    database.import_snapshot(
+        {
+            "R.40": {
+                "name": "ITAUNA",
+                "cities": [
+                    {
+                        "city_original": "MATEUS LEME",
+                        "municipality_name": "Mateus Leme",
+                        "state": "MG",
+                        "ibge_code": "3140704",
+                        "needs_review": False,
+                    },
+                    {
+                        "city_original": "AZURITA",
+                        "municipality_name": None,
+                        "state": "MG",
+                        "ibge_code": None,
+                        "needs_review": True,
+                    },
+                ],
+                "weekdays": {
+                    0: {
+                        "name": "ITAUNA",
+                        "cities": ["MATEUS LEME", "AZURITA"],
+                    },
+                },
+            }
+        },
+        {0: ["R.40"], 1: [], 2: [], 3: [], 4: []},
+        date(2026, 8, 17),
+    )
+
+    registry = database.list_city_registry()
+    azurita = next(item for item in registry if item["city_original"] == "AZURITA")
+
+    database.save_city_registry(
+        [
+            {
+                **azurita,
+                "city_original": "MATEUS LEME",
+                "municipality_name": "Mateus Leme",
+                "state": "MG",
+                "ibge_code": "3140704",
+            }
+        ]
+    )
+
+    schedule = database.load_week_schedule(date(2026, 8, 17))
+    monday_route = schedule[date(2026, 8, 17)][0]
+    monday_cities = [
+        city.city_original
+        for profile in monday_route.weekday_profiles
+        if profile.weekday == 0
+        for city in profile.cities
+    ]
+    assert monday_cities.count("MATEUS LEME") == 1

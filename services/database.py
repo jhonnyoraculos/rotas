@@ -295,6 +295,81 @@ def list_city_registry() -> list[dict]:
     return sorted(cities.values(), key=lambda item: item["city_original"])
 
 
+def _update_city_registry_record(
+    record: RouteCity | RouteWeekdayCity,
+    original: str,
+    normalized: str,
+    municipality: str | None,
+    state: str,
+    ibge_code: str | None,
+    needs_review: bool,
+) -> None:
+    record.city_original = original
+    record.normalized_city = normalized
+    record.municipality_name = municipality
+    record.state = state
+    record.ibge_code = ibge_code
+    record.needs_review = needs_review
+
+
+def _merge_or_update_city_registry_records(
+    session: Session,
+    model: type[RouteCity | RouteWeekdayCity],
+    old_normalized: str,
+    original: str,
+    new_normalized: str,
+    municipality: str | None,
+    state: str,
+    ibge_code: str | None,
+    needs_review: bool,
+) -> None:
+    parent_column = model.route_id if model is RouteCity else model.profile_id
+    records = list(
+        session.scalars(
+            select(model)
+            .where(model.normalized_city == old_normalized)
+            .order_by(model.id)
+        )
+    )
+    for record in records:
+        parent_id = record.route_id if model is RouteCity else record.profile_id
+        duplicate = session.scalar(
+            select(model)
+            .where(
+                parent_column == parent_id,
+                model.normalized_city == new_normalized,
+                model.id != record.id,
+            )
+            .order_by(model.id)
+        )
+        if duplicate is not None:
+            _update_city_registry_record(
+                duplicate,
+                original,
+                new_normalized,
+                municipality,
+                state,
+                ibge_code,
+                needs_review,
+            )
+            if (
+                isinstance(record, RouteWeekdayCity)
+                and record.position < duplicate.position
+            ):
+                duplicate.position = record.position
+            session.delete(record)
+            continue
+        _update_city_registry_record(
+            record,
+            original,
+            new_normalized,
+            municipality,
+            state,
+            ibge_code,
+            needs_review,
+        )
+
+
 def save_city_registry(rows: Sequence[dict]) -> None:
     with session_scope() as session:
         matrix_label_replacements: dict[str, str] = {}
@@ -317,18 +392,17 @@ def save_city_registry(rows: Sequence[dict]) -> None:
             new_normalized = normalize_text(original)
             matrix_label_replacements[normalized] = original
             for model in (RouteCity, RouteWeekdayCity):
-                records = list(
-                    session.scalars(
-                        select(model).where(model.normalized_city == normalized)
-                    )
+                _merge_or_update_city_registry_records(
+                    session,
+                    model,
+                    normalized,
+                    original,
+                    new_normalized,
+                    municipality,
+                    state,
+                    ibge_code,
+                    needs_review,
                 )
-                for record in records:
-                    record.city_original = original
-                    record.normalized_city = new_normalized
-                    record.municipality_name = municipality
-                    record.state = state
-                    record.ibge_code = ibge_code
-                    record.needs_review = needs_review
         _apply_city_registry_labels_to_matrix(session, matrix_label_replacements)
 
 
