@@ -25,6 +25,7 @@ from ui.spreadsheet import (
 from utils.city_normalizer import resolve_municipality_fields
 from utils.dates import monday_of, today_in_brazil
 from utils.route_matrix import add_cities_to_route_block
+from utils.route_parser import extract_route_code
 
 DAY_LABELS = (
     "SEGUNDA-FEIRA",
@@ -123,6 +124,9 @@ def _grid_options(dataframe: pd.DataFrame) -> dict:
                     color: '#050b14',
                     fontWeight: '850',
                     textAlign: 'center',
+                    cursor: /\\(?\\s*R\\s*\\.\\s*\\d+\\s*\\)?/i.test(text)
+                        ? 'pointer'
+                        : 'text',
                     backgroundColor: 'rgba(255,255,255,.92)'
                 };
             }
@@ -150,34 +154,7 @@ def _grid_options(dataframe: pd.DataFrame) -> dict:
             if (!routeMatch) {
                 return text;
             }
-
-            const wrapper = document.createElement('div');
-            wrapper.className = 'route-cell-with-action';
-
-            const label = document.createElement('span');
-            label.className = 'route-cell-label';
-            label.textContent = text;
-            wrapper.appendChild(label);
-
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'route-add-city-button';
-            button.textContent = '+';
-            button.title = 'Adicionar cidades a esta rota';
-            button.setAttribute('aria-label', 'Adicionar cidades a ' + text);
-            button.addEventListener('click', function(event) {
-                event.preventDefault();
-                event.stopPropagation();
-                params.api.dispatchEvent({
-                    type: 'routeAddClicked',
-                    weekday: params.column.getColId(),
-                    routeCode: 'R.' + parseInt(routeMatch[1], 10),
-                    routeLabel: text,
-                    requestId: String(Date.now()) + '-' + Math.random().toString(16).slice(2)
-                });
-            });
-            wrapper.appendChild(button);
-            return wrapper;
+            return text + '  +';
         }
         """
     )
@@ -429,41 +406,6 @@ custom_css = {
         "background": "#fff !important",
         "box-shadow": "inset 0 0 0 2px rgba(18,82,154,.48) !important",
     },
-    ".route-cell-with-action": {
-        "display": "flex !important",
-        "align-items": "center !important",
-        "justify-content": "center !important",
-        "gap": "6px !important",
-        "width": "100% !important",
-        "height": "100% !important",
-    },
-    ".route-cell-label": {
-        "overflow": "hidden !important",
-        "text-overflow": "ellipsis !important",
-        "white-space": "nowrap !important",
-    },
-    ".route-add-city-button": {
-        "display": "inline-flex !important",
-        "align-items": "center !important",
-        "justify-content": "center !important",
-        "flex": "0 0 20px !important",
-        "width": "20px !important",
-        "height": "20px !important",
-        "padding": "0 !important",
-        "border": "1px solid rgba(18,82,154,.28) !important",
-        "border-radius": "50% !important",
-        "color": "#fff !important",
-        "background": "linear-gradient(145deg,#12529a,#8e123f) !important",
-        "font-size": "15px !important",
-        "font-weight": "800 !important",
-        "line-height": "1 !important",
-        "cursor": "pointer !important",
-        "box-shadow": "0 2px 6px rgba(7,43,88,.18) !important",
-    },
-    ".route-add-city-button:hover": {
-        "transform": "scale(1.08) !important",
-        "filter": "brightness(1.08) !important",
-    },
 }
 
 grid_version = st.session_state.get("route_matrix_grid_version", 0)
@@ -477,7 +419,20 @@ grid_response = AgGrid(
     gridOptions=_grid_options(matrix),
     height=min(max(420, len(matrix) * 24 + 48), 820),
     data_return_mode=DataReturnMode.AS_INPUT,
-    update_on=["cellValueChanged", "routeAddClicked"],
+    update_on=["cellValueChanged", "cellClicked"],
+    should_grid_return=JsCode(
+        r"""
+        function({streamlitRerunEventTriggerName, eventData}) {
+            if (streamlitRerunEventTriggerName !== 'cellClicked') {
+                return true;
+            }
+            const value = String(eventData.value || '')
+                .replace(/^[!*\s]+/, '')
+                .trim();
+            return /\(?\s*R\s*\.\s*\d+\s*\)?/i.test(value);
+        }
+        """
+    ),
     allow_unsafe_jscode=True,
     theme="streamlit",
     custom_css=custom_css,
@@ -489,11 +444,17 @@ grid_response = AgGrid(
 edited = _grid_data(grid_response)
 
 grid_event = _grid_event_data(grid_response)
-if grid_event.get("streamlitRerunEventTriggerName") == "routeAddClicked":
-    request_id = str(grid_event.get("requestId") or "")
-    weekday_label = str(grid_event.get("weekday") or "")
-    route_code = str(grid_event.get("routeCode") or "")
-    route_label = str(grid_event.get("routeLabel") or route_code)
+if grid_event.get("streamlitRerunEventTriggerName") == "cellClicked":
+    column_data = grid_event.get("colDef") or {}
+    column_state = grid_event.get("column") or {}
+    weekday_label = str(
+        column_data.get("field") or column_state.get("colId") or ""
+    )
+    route_label = str(grid_event.get("value") or "").lstrip("!* ").strip()
+    route_code = extract_route_code(route_label) or ""
+    source_event = grid_event.get("event") or {}
+    event_stamp = source_event.get("timeStamp") or grid_event.get("rowIndex")
+    request_id = f"{weekday_label}:{route_code}:{event_stamp}"
     if (
         request_id
         and weekday_label in DAY_LABELS
