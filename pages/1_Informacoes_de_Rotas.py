@@ -364,14 +364,26 @@ else:
         },
         key="city_registry_editor",
     )
-    auto_filled_now = _auto_resolve_missing_city_codes(edited_cities)
-    if auto_filled_now:
-        st.session_state.pop("weekly_holiday_results", None)
-        st.session_state.route_matrix_save_notice = (
-            f"{auto_filled_now} codigo(s) IBGE preenchido(s) automaticamente."
-        )
-        st.rerun()
-    if st.button("Salvar cidades e codigos", type="primary"):
+    load_codes_col, save_codes_col = st.columns([1, 1])
+    with load_codes_col:
+        load_codes = st.button("Carregar codigos", type="secondary")
+    with save_codes_col:
+        save_codes = st.button("Salvar cidades e codigos", type="primary")
+
+    if load_codes:
+        try:
+            auto_filled_now = _auto_resolve_missing_city_codes(edited_cities)
+            st.session_state.pop("weekly_holiday_results", None)
+            st.session_state.route_matrix_save_notice = (
+                f"{auto_filled_now} codigo(s) IBGE preenchido(s)."
+                if auto_filled_now
+                else "Nenhum codigo IBGE encontrado automaticamente."
+            )
+            st.rerun()
+        except (ValueError, IntegrityError) as error:
+            st.error(f"Nao foi possivel carregar os codigos: {error}")
+
+    if save_codes:
         try:
             resolved_rows, auto_filled = _city_registry_rows(edited_cities)
             save_city_registry(resolved_rows)
