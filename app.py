@@ -118,6 +118,23 @@ schedule_signature = tuple(
                 route.name,
                 tuple(
                     (
+                        profile.weekday,
+                        profile.display_name,
+                        tuple(
+                            (
+                                city.city_original,
+                                city.municipality_name,
+                                city.state,
+                                city.ibge_code,
+                            )
+                            for city in profile.cities
+                        ),
+                    )
+                    for profile in getattr(route, "weekday_profiles", ())
+                    if profile.weekday == day.weekday()
+                ),
+                tuple(
+                    (
                         city.city_original,
                         city.municipality_name,
                         city.state,

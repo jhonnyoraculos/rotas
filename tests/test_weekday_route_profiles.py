@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from services import database
+from utils.city_normalizer import Municipality
 
 
 def test_import_keeps_route_cities_separated_by_weekday(
@@ -18,11 +19,11 @@ def test_import_keeps_route_cities_separated_by_weekday(
     )
     routes = {
         "R.40": {
-            "name": "ITAÚNA",
+            "name": "ITAUNA",
             "cities": [
                 {
-                    "city_original": "ITAÚNA",
-                    "municipality_name": "Itaúna",
+                    "city_original": "ITAUNA",
+                    "municipality_name": "Itauna",
                     "state": "MG",
                     "ibge_code": "3133808",
                     "needs_review": False,
@@ -43,8 +44,8 @@ def test_import_keeps_route_cities_separated_by_weekday(
                 },
             ],
             "weekdays": {
-                0: {"name": "ITAÚNA", "cities": ["MATEUS LEME"]},
-                1: {"name": "ITAÚNA", "cities": ["AZURITA"]},
+                0: {"name": "ITAUNA", "cities": ["MATEUS LEME"]},
+                1: {"name": "ITAUNA", "cities": ["AZURITA"]},
             },
         }
     }
@@ -58,10 +59,81 @@ def test_import_keeps_route_cities_separated_by_weekday(
     profiles = database.list_route_weekday_profiles()
     assert len(profiles) == 2
     assert [city.city_original for city in profiles[0].cities] == [
-        "ITAÚNA",
+        "ITAUNA",
         "MATEUS LEME",
     ]
     assert [city.city_original for city in profiles[1].cities] == [
-        "ITAÚNA",
+        "ITAUNA",
         "AZURITA",
     ]
+
+
+def test_route_matrix_save_updates_profiles_and_current_week(
+    monkeypatch, tmp_path
+) -> None:
+    url = f"sqlite:///{tmp_path / 'route-matrix.db'}"
+    database.initialize_database(url)
+    original_session_scope = database.session_scope
+    monkeypatch.setattr(
+        database,
+        "session_scope",
+        lambda: original_session_scope(url),
+    )
+    monkeypatch.setattr(
+        database,
+        "fetch_state_municipalities",
+        lambda state: (
+            Municipality("Divinopolis", "MG", "3122306"),
+            Municipality("Itauna", "MG", "3133808"),
+            Municipality("Mateus Leme", "MG", "3140704"),
+        ),
+    )
+
+    database.replace_weekday_route_matrix(
+        {
+            0: [
+                "DIVINOPOLIS (R.10)",
+                "ITAUNA (R.40)",
+                "ITAUNA",
+                "MATEUS LEME",
+            ],
+            1: [
+                "DIVINOPOLIS (R.10)",
+                "ITAUNA (R.40)",
+                "AZURITA",
+            ],
+        },
+        reference_monday=date(2026, 8, 17),
+    )
+
+    schedule = database.load_week_schedule(date(2026, 8, 17))
+    assert [route.code for route in schedule[date(2026, 8, 17)]] == [
+        "R.10",
+        "R.40",
+    ]
+    assert [route.code for route in schedule[date(2026, 8, 18)]] == [
+        "R.10",
+        "R.40",
+    ]
+
+    monday_r10 = schedule[date(2026, 8, 17)][0]
+    monday_r40 = schedule[date(2026, 8, 17)][1]
+    tuesday_r40 = schedule[date(2026, 8, 18)][1]
+    assert [
+        city.city_original
+        for profile in monday_r10.weekday_profiles
+        if profile.weekday == 0
+        for city in profile.cities
+    ] == ["DIVINOPOLIS"]
+    assert [
+        city.city_original
+        for profile in monday_r40.weekday_profiles
+        if profile.weekday == 0
+        for city in profile.cities
+    ] == ["ITAUNA", "MATEUS LEME"]
+    assert [
+        city.city_original
+        for profile in tuesday_r40.weekday_profiles
+        if profile.weekday == 1
+        for city in profile.cities
+    ] == ["ITAUNA", "AZURITA"]

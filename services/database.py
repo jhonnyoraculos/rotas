@@ -26,8 +26,18 @@ from models import (
     RouteWeekdayTemplate,
     WeeklySchedule,
 )
-from utils.city_normalizer import normalize_text
+from utils.city_normalizer import (
+    Municipality,
+    fetch_state_municipalities,
+    identify_municipality,
+    normalize_text,
+)
 from utils.dates import business_week
+from utils.route_parser import (
+    extract_route_code,
+    is_ignored_city_line,
+    strip_route_code,
+)
 
 _SCHEMA_LOCK_KEY = 82726010422026
 
@@ -264,6 +274,88 @@ def _route_city_dict(city: RouteCity) -> dict:
     }
 
 
+def _clean_matrix_cell(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return ""
+    except (ImportError, TypeError, ValueError):
+        pass
+    return " ".join(str(value).split()).strip()
+
+
+def _resolve_matrix_city(
+    original: str,
+    state: str,
+    existing_by_name: dict[str, dict],
+    municipalities: tuple[Municipality, ...] | None,
+) -> dict:
+    existing = existing_by_name.get(normalize_text(original), {})
+    if existing:
+        return {
+            "city_original": original,
+            "municipality_name": existing.get("municipality_name"),
+            "state": existing.get("state", state),
+            "ibge_code": existing.get("ibge_code"),
+            "needs_review": existing.get("needs_review", True),
+        }
+    municipality = identify_municipality(original, state, municipalities)
+    return {
+        "city_original": original,
+        "municipality_name": municipality.name if municipality else None,
+        "state": municipality.state if municipality else state,
+        "ibge_code": municipality.ibge_code if municipality else None,
+        "needs_review": municipality is None,
+    }
+
+
+def _weekday_blocks_from_columns(
+    columns: dict[int, Sequence[object]],
+) -> tuple[dict[str, dict], dict[int, list[str]]]:
+    routes: dict[str, dict] = {}
+    schedule: dict[int, list[str]] = {weekday: [] for weekday in range(5)}
+    for weekday in range(5):
+        current: dict | None = None
+        blocks_by_code: dict[str, dict] = {}
+        for raw_value in columns.get(weekday, []):
+            value = _clean_matrix_cell(raw_value)
+            if not value:
+                continue
+            code = extract_route_code(value)
+            if code:
+                name = strip_route_code(value) or code
+                route_item = routes.setdefault(
+                    code, {"name": name, "weekdays": {}}
+                )
+                if route_item["name"] == code and name != code:
+                    route_item["name"] = name
+                if code not in schedule[weekday]:
+                    schedule[weekday].append(code)
+                current = route_item["weekdays"].setdefault(
+                    weekday, {"name": name, "cities": []}
+                )
+                current["name"] = current.get("name") or name
+                blocks_by_code[code] = current
+                continue
+            if current is None or is_ignored_city_line(value):
+                continue
+            normalized = normalize_text(value)
+            if normalized.startswith(("EXTRA BH", "COLETA ")):
+                current = None
+                continue
+            if normalized and all(
+                normalize_text(existing) != normalized
+                for existing in current["cities"]
+            ):
+                current["cities"].append(value)
+        for code, block in blocks_by_code.items():
+            routes[code]["weekdays"][weekday] = block
+    return routes, schedule
+
+
 def _weekday_city_rows(route_item: dict, profile_item: dict) -> list[dict]:
     global_rows = list(route_item.get("cities") or [])
     source_cities = list(profile_item.get("cities") or [])
@@ -384,6 +476,138 @@ def replace_route_weekday_profiles(
         _replace_weekday_profiles_in_session(
             session, enriched, route_by_code, schedule
         )
+
+
+def replace_weekday_route_matrix(
+    columns: dict[int, Sequence[object]],
+    state: str = "MG",
+    reference_monday: date | None = None,
+) -> None:
+    parsed_routes, schedule = _weekday_blocks_from_columns(columns)
+    normalized_state = state.strip().upper()[:2] or "MG"
+    try:
+        municipalities = fetch_state_municipalities(normalized_state)
+    except Exception:  # noqa: BLE001 - a consulta ao IBGE pode estar indisponivel
+        municipalities = None
+
+    with session_scope() as session:
+        existing_routes = list(
+            session.scalars(select(Route).options(selectinload(Route.cities))).unique()
+        )
+        route_by_code = {route.code: route for route in existing_routes}
+
+        for code, item in parsed_routes.items():
+            route = route_by_code.get(code)
+            if route is None:
+                route = Route(
+                    code=code,
+                    name=item["name"],
+                    normalized_name=normalize_text(item["name"]),
+                    active=True,
+                )
+                session.add(route)
+                session.flush()
+                route_by_code[code] = route
+            else:
+                route.name = item["name"] or route.name
+                route.normalized_name = normalize_text(route.name)
+                route.active = True
+
+        enriched: dict[str, dict] = {}
+        for code, item in parsed_routes.items():
+            route = route_by_code.get(code)
+            if route is None:
+                continue
+            existing_by_name: dict[str, dict] = {}
+            for city in route.cities:
+                city_row = _route_city_dict(city)
+                for value in (city.city_original, city.municipality_name):
+                    normalized = normalize_text(value)
+                    if normalized:
+                        existing_by_name.setdefault(normalized, city_row)
+
+            global_rows: list[dict] = []
+            global_seen: set[str] = set()
+            route_city = _resolve_matrix_city(
+                route.name, normalized_state, existing_by_name, municipalities
+            )
+            if route_city.get("ibge_code"):
+                global_rows.append(route_city)
+                global_seen.add(normalize_text(route_city["city_original"]))
+
+            weekdays: dict[int, dict] = {}
+            for weekday, profile_item in item.get("weekdays", {}).items():
+                rows: list[dict] = []
+                for original in profile_item.get("cities", []):
+                    normalized = normalize_text(original)
+                    if not normalized:
+                        continue
+                    row = _resolve_matrix_city(
+                        original, normalized_state, existing_by_name, municipalities
+                    )
+                    rows.append(row)
+                    if normalized not in global_seen:
+                        global_seen.add(normalized)
+                        global_rows.append(row)
+                weekdays[weekday] = {
+                    "name": profile_item.get("name") or route.name,
+                    "cities": [row["city_original"] for row in rows],
+                }
+            session.execute(delete(RouteCity).where(RouteCity.route_id == route.id))
+            for row in global_rows:
+                session.add(
+                    RouteCity(
+                        route_id=route.id,
+                        city_original=row["city_original"],
+                        municipality_name=row.get("municipality_name"),
+                        normalized_city=normalize_text(row["city_original"]),
+                        state=row.get("state", normalized_state),
+                        ibge_code=row.get("ibge_code"),
+                        needs_review=row.get("needs_review", True),
+                    )
+                )
+            enriched[code] = {
+                "name": route.name,
+                "cities": global_rows,
+                "weekdays": weekdays,
+            }
+
+        session.execute(delete(RouteWeekdayTemplate))
+        _replace_weekday_profiles_in_session(
+            session, enriched, route_by_code, schedule
+        )
+        for weekday, codes in schedule.items():
+            for position, code in enumerate(codes):
+                route = route_by_code.get(code)
+                if route is not None:
+                    session.add(
+                        RouteWeekdayTemplate(
+                            weekday=weekday,
+                            route_id=route.id,
+                            position=position,
+                        )
+                    )
+
+        if reference_monday is not None:
+            days = business_week(reference_monday)
+            session.execute(delete(WeeklySchedule).where(WeeklySchedule.date.in_(days)))
+            for weekday, codes in schedule.items():
+                for position, code in enumerate(codes):
+                    route = route_by_code.get(code)
+                    if route is not None:
+                        session.add(
+                            WeeklySchedule(
+                                date=days[weekday],
+                                route_id=route.id,
+                                position=position,
+                            )
+                        )
+            key = f"week_materialized:{days[0].isoformat()}"
+            setting = session.get(AppSetting, key)
+            if setting is None:
+                session.add(AppSetting(key=key, value="matrix"))
+            else:
+                setting.value = "matrix"
 
 
 def import_snapshot(
