@@ -225,9 +225,7 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
 def _auto_resolve_missing_city_codes(dataframe: pd.DataFrame) -> int:
     resolved_rows, auto_filled = _city_registry_rows(dataframe)
     if auto_filled:
-        save_city_registry(
-            [row for row in resolved_rows if str(row.get("ibge_code") or "").strip()]
-        )
+        save_city_registry(resolved_rows)
     return auto_filled
 
 
