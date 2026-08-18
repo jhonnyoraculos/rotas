@@ -24,13 +24,14 @@ from ui.spreadsheet import (
 )
 from utils.city_normalizer import resolve_municipality_fields
 from utils.dates import monday_of, today_in_brazil
+from utils.route_matrix import add_cities_to_route_block, route_choices_for_weekday
 
 DAY_LABELS = (
-    "SEGUNDA - FEIRA",
-    "TERCA - FEIRA",
-    "QUARTA - FEIRA",
-    "QUINTA - FEIRA",
-    "SEXTA - FEIRA",
+    "SEGUNDA-FEIRA",
+    "TERÇA-FEIRA",
+    "QUARTA-FEIRA",
+    "QUINTA-FEIRA",
+    "SEXTA-FEIRA",
 )
 
 
@@ -168,9 +169,9 @@ def _city_registry_dataframe(rows: list[dict]) -> pd.DataFrame:
             {
                 "_normalized_city": item["normalized_city"],
                 "Localidade original": item["city_original"],
-                "Municipio oficial": item["municipality_name"],
+                "Município oficial": item["municipality_name"],
                 "UF": item["state"],
-                "Codigo IBGE": item["ibge_code"],
+                "Código IBGE": item["ibge_code"],
                 "Pendente": item["needs_review"],
             }
             for item in rows
@@ -178,9 +179,9 @@ def _city_registry_dataframe(rows: list[dict]) -> pd.DataFrame:
         columns=[
             "_normalized_city",
             "Localidade original",
-            "Municipio oficial",
+            "Município oficial",
             "UF",
-            "Codigo IBGE",
+            "Código IBGE",
             "Pendente",
         ],
     )
@@ -199,9 +200,9 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
         original = _clean_editor_value(item.get("Localidade original"))
         if not original:
             continue
-        municipality = _clean_editor_value(item.get("Municipio oficial"))
+        municipality = _clean_editor_value(item.get("Município oficial"))
         state = _clean_editor_value(item.get("UF"), "MG") or "MG"
-        ibge = _clean_editor_value(item.get("Codigo IBGE"))
+        ibge = _clean_editor_value(item.get("Código IBGE"))
         resolved_name, resolved_state, resolved_code = resolve_municipality_fields(
             original,
             municipality,
@@ -224,8 +225,8 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
 
 def _resolve_and_save_city_registry(dataframe: pd.DataFrame) -> int:
     resolved_rows, auto_filled = _city_registry_rows(dataframe)
-    # O botao tambem confirma edicoes manuais. Salvar somente quando um codigo
-    # era encontrado fazia municipio, localidade e codigo digitados voltarem ao
+    # O botão também confirma edições manuais. Salvar somente quando um código
+    # era encontrado fazia município, localidade e código digitados voltarem ao
     # valor anterior depois do rerun do Streamlit.
     save_city_registry(resolved_rows)
     return auto_filled
@@ -237,8 +238,14 @@ def _advance_city_registry_editor() -> None:
     )
 
 
+def _advance_route_matrix_grid() -> None:
+    st.session_state.route_matrix_grid_version = (
+        st.session_state.get("route_matrix_grid_version", 0) + 1
+    )
+
+
 st.set_page_config(
-    page_title="Informacoes das Rotas",
+    page_title="Informações das Rotas",
     page_icon=str(LOGO_PATH),
     layout="wide",
 )
@@ -246,7 +253,7 @@ apply_spreadsheet_style("route_info")
 initialize_database()
 
 render_page_header(
-    "Informacoes das rotas",
+    "Informações das rotas",
     "Edite a matriz mestre de rotas e cidades por dia da semana.",
     "Malha semanal",
 )
@@ -265,7 +272,7 @@ if count_route_weekday_profiles() == 0:
             with st.spinner("Organizando as cidades por dia da semana..."):
                 import_weekday_profiles(workbook)
         except Exception as error:  # noqa: BLE001 - planilha externa pode variar
-            st.warning(f"Nao foi possivel organizar a planilha por dia: {error}")
+            st.warning(f"Não foi possível organizar a planilha por dia: {error}")
 
 save_notice = st.session_state.pop("route_matrix_save_notice", None)
 if save_notice:
@@ -278,6 +285,78 @@ matrix = (
     if saved_columns is not None
     else _matrix_dataframe(profiles)
 )
+
+st.markdown("### Adicionar cidades à rota")
+st.caption(
+    "Escolha o dia e a rota. Você pode colar várias cidades, uma em cada linha. "
+    "A inclusão é salva automaticamente."
+)
+selected_weekday = st.selectbox(
+    "Dia da semana",
+    options=list(range(5)),
+    format_func=lambda weekday: DAY_LABELS[weekday].capitalize(),
+    key="new_city_weekday",
+)
+route_choices = route_choices_for_weekday(
+    _edited_columns(matrix), selected_weekday
+)
+if not route_choices:
+    st.info("Não há rotas cadastradas nesse dia.")
+else:
+    route_labels = {code: label for code, label in route_choices}
+    with st.form("add_route_cities_form"):
+        selected_route_code = st.selectbox(
+            "Rota",
+            options=list(route_labels),
+            format_func=lambda code: route_labels[code],
+        )
+        new_cities_text = st.text_area(
+            "Novas cidades",
+            placeholder="Digite uma cidade por linha\nEx.: NOVA SERRANA\nPERDIGÃO",
+            height=110,
+        )
+        mark_as_condition = st.checkbox(
+            "Marcar todas como condição (texto vermelho)"
+        )
+        add_cities = st.form_submit_button(
+            "Adicionar cidades à rota", type="primary"
+        )
+
+    if add_cities:
+        try:
+            city_names = new_cities_text.splitlines()
+            updated_columns, added_count = add_cities_to_route_block(
+                _edited_columns(matrix),
+                selected_weekday,
+                selected_route_code,
+                city_names,
+                condition=mark_as_condition,
+            )
+            if not added_count:
+                st.warning(
+                    "Informe ao menos uma cidade nova. Cidades repetidas não são "
+                    "adicionadas novamente."
+                )
+            else:
+                replace_weekday_route_matrix(
+                    updated_columns,
+                    reference_monday=monday_of(today_in_brazil()),
+                )
+                st.session_state.pop("weekly_holiday_results", None)
+                city_word = (
+                    "cidade adicionada"
+                    if added_count == 1
+                    else "cidades adicionadas"
+                )
+                st.session_state.route_matrix_save_notice = (
+                    f"{added_count} {city_word} à rota {route_labels[selected_route_code]} "
+                    f"de {DAY_LABELS[selected_weekday].lower()}."
+                )
+                _advance_route_matrix_grid()
+                st.rerun()
+        except (ValueError, IntegrityError) as error:
+            st.error(f"Não foi possível adicionar as cidades: {error}")
+
 custom_css = {
     ".ag-root-wrapper": {
         "border": "0 !important",
@@ -317,6 +396,12 @@ custom_css = {
     },
 }
 
+grid_version = st.session_state.get("route_matrix_grid_version", 0)
+grid_key = f"route_matrix_grid_data_{grid_version}"
+for state_key in list(st.session_state):
+    if state_key.startswith("route_matrix_grid_data_") and state_key != grid_key:
+        st.session_state.pop(state_key, None)
+
 grid_response = AgGrid(
     matrix,
     gridOptions=_grid_options(matrix),
@@ -326,7 +411,7 @@ grid_response = AgGrid(
     allow_unsafe_jscode=True,
     theme="streamlit",
     custom_css=custom_css,
-    key="route_matrix_grid",
+    key=grid_key,
     show_search=False,
     show_toolbar=False,
     show_download_button=False,
@@ -345,12 +430,13 @@ if save_matrix:
         st.session_state.route_matrix_save_notice = (
             "Matriz salva. A escala semanal agora usa estas rotas e cidades por dia."
         )
+        _advance_route_matrix_grid()
         st.rerun()
     except (ValueError, IntegrityError) as error:
-        st.error(f"Nao foi possivel salvar a matriz: {error}")
+        st.error(f"Não foi possível salvar a matriz: {error}")
 
 city_rows = list_city_registry()
-st.markdown("### Cidades e codigos IBGE")
+st.markdown("### Cidades e códigos IBGE")
 if not city_rows:
     st.info("Salve a matriz para carregar as cidades aqui.")
 else:
@@ -371,46 +457,55 @@ else:
         column_config={
             "_normalized_city": None,
             "Localidade original": st.column_config.TextColumn(width="medium"),
-            "Municipio oficial": st.column_config.TextColumn(width="medium"),
+            "Município oficial": st.column_config.TextColumn(width="medium"),
             "UF": st.column_config.TextColumn(width="small"),
-            "Codigo IBGE": st.column_config.TextColumn(width="small"),
+            "Código IBGE": st.column_config.TextColumn(width="small"),
             "Pendente": st.column_config.CheckboxColumn(width="small"),
         },
         key=editor_key,
     )
     load_codes_col, save_codes_col = st.columns([1, 1])
     with load_codes_col:
-        load_codes = st.button("Carregar codigos", type="secondary")
+        load_codes = st.button("Carregar códigos", type="secondary")
     with save_codes_col:
-        save_codes = st.button("Salvar cidades e codigos", type="primary")
+        save_codes = st.button("Salvar cidades e códigos", type="primary")
 
     if load_codes:
         try:
             auto_filled_now = _resolve_and_save_city_registry(edited_cities)
             st.session_state.pop("weekly_holiday_results", None)
             st.session_state.route_matrix_save_notice = (
-                f"{auto_filled_now} codigo(s) IBGE preenchido(s)."
+                (
+                    "1 código IBGE preenchido."
+                    if auto_filled_now == 1
+                    else f"{auto_filled_now} códigos IBGE preenchidos."
+                )
                 if auto_filled_now
                 else (
-                    "Alteracoes salvas. Nenhum novo codigo IBGE foi encontrado "
+                    "Alterações salvas. Nenhum novo código IBGE foi encontrado "
                     "automaticamente."
                 )
             )
             _advance_city_registry_editor()
             st.rerun()
         except (ValueError, IntegrityError) as error:
-            st.error(f"Nao foi possivel carregar os codigos: {error}")
+            st.error(f"Não foi possível carregar os códigos: {error}")
 
     if save_codes:
         try:
             resolved_rows, auto_filled = _city_registry_rows(edited_cities)
             save_city_registry(resolved_rows)
             st.session_state.pop("weekly_holiday_results", None)
-            message = "Cidades e codigos IBGE salvos."
+            message = "Cidades e códigos IBGE salvos."
             if auto_filled:
-                message += f" {auto_filled} codigo(s) preenchido(s) automaticamente."
+                filled_message = (
+                    "1 código preenchido automaticamente."
+                    if auto_filled == 1
+                    else f"{auto_filled} códigos preenchidos automaticamente."
+                )
+                message += f" {filled_message}"
             st.session_state.route_matrix_save_notice = message
             _advance_city_registry_editor()
             st.rerun()
         except (ValueError, IntegrityError) as error:
-            st.error(f"Nao foi possivel salvar as cidades: {error}")
+            st.error(f"Não foi possível salvar as cidades: {error}")
