@@ -7,6 +7,8 @@ from models.entities import (
     HolidaySyncStatus,
     Route,
     RouteCity,
+    RouteWeekdayCity,
+    RouteWeekdayProfile,
     RouteWeekdayTemplate,
     WeeklySchedule,
 )
@@ -18,6 +20,8 @@ __all__ = [
     "HolidaySyncStatus",
     "Route",
     "RouteCity",
+    "RouteWeekdayCity",
+    "RouteWeekdayProfile",
     "RouteWeekdayTemplate",
     "WeeklySchedule",
 ]

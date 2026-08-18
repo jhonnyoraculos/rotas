@@ -61,6 +61,55 @@ def test_holiday_in_any_city_marks_the_route() -> None:
     assert matches[0].date == date(2026, 8, 21)
 
 
+def test_holiday_matching_uses_cities_from_the_correct_weekday() -> None:
+    class WeekdayProvider(HolidayProvider):
+        def get_holidays(self, city, state, year, ibge_code=None):
+            holidays_by_city = {
+                "Mateus Leme": Holiday(
+                    date(2026, 8, 17), "Feriado de segunda", "Municipal", "teste"
+                ),
+                "Azurita": Holiday(
+                    date(2026, 8, 18), "Feriado de terça", "Municipal", "teste"
+                ),
+            }
+            holiday = holidays_by_city.get(city)
+            return ProviderResult((holiday,) if holiday else (), True)
+
+    monday_city = SimpleNamespace(
+        holiday_city="Mateus Leme", state="MG", ibge_code="3140704"
+    )
+    tuesday_city = SimpleNamespace(
+        holiday_city="Azurita", state="MG", ibge_code=None
+    )
+    route = SimpleNamespace(
+        id=40,
+        code="R.40",
+        name="Itaúna",
+        cities=[monday_city, tuesday_city],
+        weekday_profiles=[
+            SimpleNamespace(weekday=0, cities=[monday_city]),
+            SimpleNamespace(weekday=1, cities=[tuesday_city]),
+        ],
+    )
+    service = HolidayService(
+        provider=WeekdayProvider(),
+        persist=False,
+        general_loader=lambda year, state: [],
+    )
+
+    matches = service.match_week(
+        {
+            date(2026, 8, 17): [route],
+            date(2026, 8, 18): [route],
+        }
+    )
+
+    assert [(item.date, item.city) for item in matches] == [
+        (date(2026, 8, 17), "Mateus Leme"),
+        (date(2026, 8, 18), "Azurita"),
+    ]
+
+
 def test_provider_uses_bearer_authorization(monkeypatch) -> None:
     captured = {}
 

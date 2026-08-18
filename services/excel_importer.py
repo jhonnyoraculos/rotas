@@ -35,6 +35,7 @@ class WorkbookAnalysis:
     header_row: int
     schedule: dict[int, list[str]]
     routes: dict[str, ParsedRoute]
+    weekday_routes: dict[int, dict[str, ParsedRoute]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def summary_lines(self) -> list[str]:
@@ -43,6 +44,11 @@ class WorkbookAnalysis:
             f"Escala: '{self.schedule_sheet}', cabeçalho na linha {self.header_row}",
             f"Relação rota → cidades: '{self.route_cities_sheet}'",
             f"Rotas reconhecidas: {len(self.routes)}",
+            "Perfis de rota por dia: "
+            + ", ".join(
+                f"{WEEKDAY_TOKENS[index]}={len(self.weekday_routes.get(index, {}))}"
+                for index in range(5)
+            ),
             "Itens por dia: "
             + ", ".join(
                 f"{WEEKDAY_TOKENS[index]}={len(self.schedule.get(index, []))}"
@@ -153,6 +159,52 @@ def parse_route_cities_sheet(
     return routes
 
 
+def parse_weekday_route_cities_sheet(
+    worksheet: openpyxl.worksheet.worksheet.Worksheet,
+) -> dict[int, dict[str, ParsedRoute]]:
+    header_row = 0
+    weekday_columns: dict[int, int] = {}
+    for row_number in range(1, min(worksheet.max_row, 30) + 1):
+        columns: dict[int, int] = {}
+        for cell in worksheet[row_number]:
+            weekday = _weekday_index(cell.value)
+            if weekday is not None and weekday not in columns:
+                columns[weekday] = cell.column
+        if len(columns) > len(weekday_columns):
+            header_row, weekday_columns = row_number, columns
+        if len(weekday_columns) == 5:
+            break
+    if len(weekday_columns) < 3:
+        return {}
+
+    result: dict[int, dict[str, ParsedRoute]] = {
+        index: {} for index in range(5)
+    }
+    for weekday, column in weekday_columns.items():
+        current: ParsedRoute | None = None
+        for row_number in range(header_row + 1, worksheet.max_row + 1):
+            for line in _cell_lines(worksheet.cell(row_number, column).value):
+                code = extract_route_code(line)
+                if code:
+                    name = strip_route_code(line) or code
+                    current = result[weekday].setdefault(
+                        code, ParsedRoute(code=code, name=name, original=line)
+                    )
+                    continue
+                normalized = normalize_text(line)
+                if normalized.startswith(("EXTRA BH", "COLETA ")):
+                    current = None
+                    continue
+                if current is None or is_ignored_city_line(line):
+                    continue
+                if normalized and all(
+                    normalize_text(existing) != normalized
+                    for existing in current.cities
+                ):
+                    current.cities.append(line)
+    return result
+
+
 def analyze_workbook(source: str | Path | BinaryIO) -> WorkbookAnalysis:
     workbook = openpyxl.load_workbook(source, data_only=True, read_only=False)
     schedule_sheet = _find_sheet(workbook, SCHEDULE_SHEET)
@@ -160,7 +212,9 @@ def analyze_workbook(source: str | Path | BinaryIO) -> WorkbookAnalysis:
     header_row, schedule, schedule_names = parse_schedule_sheet(
         workbook[schedule_sheet]
     )
-    routes = parse_route_cities_sheet(workbook[cities_sheet])
+    cities_worksheet = workbook[cities_sheet]
+    routes = parse_route_cities_sheet(cities_worksheet)
+    weekday_routes = parse_weekday_route_cities_sheet(cities_worksheet)
     warnings: list[str] = []
     for code, name in schedule_names.items():
         if code not in routes:
@@ -183,6 +237,7 @@ def analyze_workbook(source: str | Path | BinaryIO) -> WorkbookAnalysis:
         header_row=header_row,
         schedule=schedule,
         routes=routes,
+        weekday_routes=weekday_routes,
         warnings=warnings,
     )
 
@@ -227,7 +282,44 @@ def build_import_snapshot(
                 }
             )
         result[code] = {"name": parsed.name, "cities": city_rows}
+        result[code]["weekdays"] = {
+            weekday: {
+                "name": weekday_route.name,
+                "cities": list(weekday_route.cities),
+            }
+            for weekday, weekday_items in analysis.weekday_routes.items()
+            if (weekday_route := weekday_items.get(code)) is not None
+        }
     return result
+
+
+def build_weekday_details_snapshot(analysis: WorkbookAnalysis) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for code, parsed in analysis.routes.items():
+        result[code] = {
+            "name": parsed.name,
+            "weekdays": {
+                weekday: {
+                    "name": weekday_route.name,
+                    "cities": list(weekday_route.cities),
+                }
+                for weekday, weekday_items in analysis.weekday_routes.items()
+                if (weekday_route := weekday_items.get(code)) is not None
+            },
+        }
+    return result
+
+
+def import_weekday_profiles(
+    source: str | Path | BinaryIO,
+) -> WorkbookAnalysis:
+    from services.database import replace_route_weekday_profiles
+
+    analysis = analyze_workbook(source)
+    replace_route_weekday_profiles(
+        build_weekday_details_snapshot(analysis), analysis.schedule
+    )
+    return analysis
 
 
 def import_workbook(

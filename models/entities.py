@@ -41,6 +41,11 @@ class Route(Base):
     cities: Mapped[list[RouteCity]] = relationship(
         back_populates="route", cascade="all, delete-orphan", order_by="RouteCity.id"
     )
+    weekday_profiles: Mapped[list[RouteWeekdayProfile]] = relationship(
+        back_populates="route",
+        cascade="all, delete-orphan",
+        order_by="RouteWeekdayProfile.weekday",
+    )
 
     @property
     def label(self) -> str:
@@ -82,6 +87,59 @@ class RouteWeekdayTemplate(Base):
     route_id: Mapped[int] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"))
     position: Mapped[int] = mapped_column(Integer, default=0)
     route: Mapped[Route] = relationship()
+
+
+class RouteWeekdayProfile(Base):
+    __tablename__ = "route_weekday_profiles"
+    __table_args__ = (
+        UniqueConstraint("weekday", "route_id", name="uq_route_weekday_profile"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    weekday: Mapped[int] = mapped_column(Integer, index=True)
+    route_id: Mapped[int] = mapped_column(
+        ForeignKey("routes.id", ondelete="CASCADE"), index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(200))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    route: Mapped[Route] = relationship(back_populates="weekday_profiles")
+    cities: Mapped[list[RouteWeekdayCity]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        order_by="RouteWeekdayCity.position",
+    )
+
+    @property
+    def label(self) -> str:
+        return f"{self.display_name} ({self.route.code})"
+
+
+class RouteWeekdayCity(Base):
+    __tablename__ = "route_weekday_cities"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id", "normalized_city", name="uq_route_weekday_city"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("route_weekday_profiles.id", ondelete="CASCADE"), index=True
+    )
+    city_original: Mapped[str] = mapped_column(String(200))
+    municipality_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    normalized_city: Mapped[str] = mapped_column(String(200), index=True)
+    state: Mapped[str] = mapped_column(String(2), default="MG")
+    ibge_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    profile: Mapped[RouteWeekdayProfile] = relationship(back_populates="cities")
+
+    @property
+    def holiday_city(self) -> str:
+        return self.municipality_name or self.city_original
 
 
 class WeeklySchedule(Base):
