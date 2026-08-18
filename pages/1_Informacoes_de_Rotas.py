@@ -353,7 +353,7 @@ else:
         city_registry,
         hide_index=True,
         width="stretch",
-        disabled=["_normalized_city", "Localidade original", "Pendente"],
+        disabled=["_normalized_city", "Pendente"],
         column_config={
             "_normalized_city": None,
             "Localidade original": st.column_config.TextColumn(width="medium"),

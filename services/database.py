@@ -297,6 +297,7 @@ def list_city_registry() -> list[dict]:
 
 def save_city_registry(rows: Sequence[dict]) -> None:
     with session_scope() as session:
+        matrix_label_replacements: dict[str, str] = {}
         for item in rows:
             normalized = str(item.get("normalized_city") or "").strip()
             original = " ".join(str(item.get("city_original") or "").split()).strip()
@@ -313,6 +314,8 @@ def save_city_registry(rows: Sequence[dict]) -> None:
             if ibge_code and municipality is None:
                 municipality = original or None
             needs_review = not bool(ibge_code and municipality)
+            new_normalized = normalize_text(original)
+            matrix_label_replacements[normalized] = original
             for model in (RouteCity, RouteWeekdayCity):
                 records = list(
                     session.scalars(
@@ -320,10 +323,13 @@ def save_city_registry(rows: Sequence[dict]) -> None:
                     )
                 )
                 for record in records:
+                    record.city_original = original
+                    record.normalized_city = new_normalized
                     record.municipality_name = municipality
                     record.state = state
                     record.ibge_code = ibge_code
                     record.needs_review = needs_review
+        _apply_city_registry_labels_to_matrix(session, matrix_label_replacements)
 
 
 def _route_city_dict(city: RouteCity) -> dict:
@@ -384,6 +390,41 @@ def saved_route_matrix_columns() -> dict[int, list[str]] | None:
         ]
         for weekday in range(5)
     }
+
+
+def _apply_city_registry_labels_to_matrix(
+    session: Session, replacements: dict[str, str]
+) -> None:
+    if not replacements:
+        return
+    setting = session.get(AppSetting, _ROUTE_MATRIX_KEY)
+    if setting is None or not setting.value:
+        return
+    try:
+        payload = json.loads(setting.value)
+    except (TypeError, json.JSONDecodeError):
+        return
+
+    changed = False
+    for weekday in range(5):
+        values = payload.get(str(weekday), [])
+        if not isinstance(values, list):
+            continue
+        updated_values = []
+        for value in values:
+            text_value = _clean_matrix_cell(value)
+            matrix_value = _matrix_cell_value(text_value)
+            replacement = replacements.get(normalize_text(matrix_value))
+            if replacement:
+                prefix = text_value[: len(text_value) - len(text_value.lstrip("!* "))]
+                updated_values.append(f"{prefix}{replacement}")
+                changed = True
+            else:
+                updated_values.append(text_value)
+        payload[str(weekday)] = updated_values
+
+    if changed:
+        setting.value = json.dumps(payload)
 
 
 def _resolve_matrix_city(

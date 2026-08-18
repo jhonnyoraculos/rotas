@@ -171,6 +171,29 @@ def test_route_matrix_save_updates_profiles_and_current_week(
     assert tuesday_azurita.ibge_code == "3140704"
     assert not tuesday_azurita.needs_review
 
+    database.save_city_registry(
+        [
+            {
+                **azurita,
+                "city_original": "AZURITA CORRIGIDA",
+                "municipality_name": "Mateus Leme",
+                "state": "MG",
+                "ibge_code": "3140704",
+            }
+        ]
+    )
+
+    renamed = database.load_week_schedule(date(2026, 8, 17))[date(2026, 8, 18)][1]
+    assert any(
+        city.city_original == "AZURITA CORRIGIDA"
+        for profile in renamed.weekday_profiles
+        if profile.weekday == 1
+        for city in profile.cities
+    )
+    saved_after_rename = database.saved_route_matrix_columns()
+    assert saved_after_rename is not None
+    assert "AZURITA CORRIGIDA" in saved_after_rename[1]
+
     assert resolve_municipality_fields(
         "ARAXA- CONDICOES",
         "Araxa",
