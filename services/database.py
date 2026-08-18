@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import create_engine, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
@@ -28,6 +28,8 @@ from models import (
 )
 from utils.city_normalizer import normalize_text
 from utils.dates import business_week
+
+_SCHEMA_LOCK_KEY = 82726010422026
 
 
 def _streamlit_secret(name: str) -> str | None:
@@ -79,7 +81,16 @@ def session_scope(url: str | None = None) -> Iterator[Session]:
 
 @lru_cache(maxsize=4)
 def initialize_database(url: str | None = None) -> None:
-    Base.metadata.create_all(get_engine(url))
+    engine = get_engine(url)
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": _SCHEMA_LOCK_KEY},
+            )
+            Base.metadata.create_all(connection)
+        return
+    Base.metadata.create_all(engine)
 
 
 def connection_description() -> str:
