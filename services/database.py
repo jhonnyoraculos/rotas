@@ -266,6 +266,66 @@ def resolve_route_city(
         item.needs_review = False
 
 
+def list_city_registry() -> list[dict]:
+    cities: dict[str, dict] = {}
+    with session_scope() as session:
+        route_cities = list(session.scalars(select(RouteCity)))
+        weekday_cities = list(session.scalars(select(RouteWeekdayCity)))
+    for city in [*route_cities, *weekday_cities]:
+        normalized = city.normalized_city or normalize_text(city.city_original)
+        if not normalized:
+            continue
+        existing = cities.get(normalized)
+        row = {
+            "normalized_city": normalized,
+            "city_original": city.city_original,
+            "municipality_name": city.municipality_name or "",
+            "state": city.state or "MG",
+            "ibge_code": city.ibge_code or "",
+            "needs_review": city.needs_review,
+        }
+        if existing is None:
+            cities[normalized] = row
+            continue
+        if (
+            (not existing["ibge_code"] and row["ibge_code"])
+            or (existing["needs_review"] and not row["needs_review"])
+        ):
+            cities[normalized] = row
+    return sorted(cities.values(), key=lambda item: item["city_original"])
+
+
+def save_city_registry(rows: Sequence[dict]) -> None:
+    with session_scope() as session:
+        for item in rows:
+            normalized = str(item.get("normalized_city") or "").strip()
+            original = " ".join(str(item.get("city_original") or "").split()).strip()
+            if not normalized:
+                normalized = normalize_text(original)
+            if not normalized:
+                continue
+            municipality = (
+                " ".join(str(item.get("municipality_name") or "").split()).strip()
+                or None
+            )
+            state = str(item.get("state") or "MG").strip().upper()[:2] or "MG"
+            ibge_code = str(item.get("ibge_code") or "").strip() or None
+            if ibge_code and municipality is None:
+                municipality = original or None
+            needs_review = not bool(ibge_code and municipality)
+            for model in (RouteCity, RouteWeekdayCity):
+                records = list(
+                    session.scalars(
+                        select(model).where(model.normalized_city == normalized)
+                    )
+                )
+                for record in records:
+                    record.municipality_name = municipality
+                    record.state = state
+                    record.ibge_code = ibge_code
+                    record.needs_review = needs_review
+
+
 def _route_city_dict(city: RouteCity) -> dict:
     return {
         "city_original": city.city_original,

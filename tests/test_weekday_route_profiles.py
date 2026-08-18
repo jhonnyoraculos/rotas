@@ -142,3 +142,30 @@ def test_route_matrix_save_updates_profiles_and_current_week(
     saved_matrix = database.saved_route_matrix_columns()
     assert saved_matrix is not None
     assert "!SAO ROQUE DE MINAS CONDICAO" in saved_matrix[0]
+
+    registry = database.list_city_registry()
+    azurita = next(item for item in registry if item["city_original"] == "AZURITA")
+    assert azurita["needs_review"]
+
+    database.save_city_registry(
+        [
+            {
+                **azurita,
+                "municipality_name": "Mateus Leme",
+                "state": "MG",
+                "ibge_code": "3140704",
+            }
+        ]
+    )
+
+    updated = database.load_week_schedule(date(2026, 8, 17))[date(2026, 8, 18)][1]
+    tuesday_azurita = next(
+        city
+        for profile in updated.weekday_profiles
+        if profile.weekday == 1
+        for city in profile.cities
+        if city.city_original == "AZURITA"
+    )
+    assert tuesday_azurita.municipality_name == "Mateus Leme"
+    assert tuesday_azurita.ibge_code == "3140704"
+    assert not tuesday_azurita.needs_review

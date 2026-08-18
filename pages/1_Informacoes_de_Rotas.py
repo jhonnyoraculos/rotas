@@ -10,8 +10,10 @@ from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, JsCode
 from services.database import (
     count_route_weekday_profiles,
     initialize_database,
+    list_city_registry,
     list_route_weekday_profiles,
     replace_weekday_route_matrix,
+    save_city_registry,
     saved_route_matrix_columns,
 )
 from services.excel_importer import import_weekday_profiles
@@ -20,6 +22,7 @@ from ui.spreadsheet import (
     apply_spreadsheet_style,
     render_page_header,
 )
+from utils.city_normalizer import resolve_municipality_fields
 from utils.dates import monday_of, today_in_brazil
 
 DAY_LABELS = (
@@ -159,6 +162,66 @@ def _grid_data(response: object) -> pd.DataFrame:
     return dataframe.reindex(columns=DAY_LABELS).fillna("")
 
 
+def _city_registry_dataframe(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "_normalized_city": item["normalized_city"],
+                "Localidade original": item["city_original"],
+                "Municipio oficial": item["municipality_name"],
+                "UF": item["state"],
+                "Codigo IBGE": item["ibge_code"],
+                "Pendente": item["needs_review"],
+            }
+            for item in rows
+        ],
+        columns=[
+            "_normalized_city",
+            "Localidade original",
+            "Municipio oficial",
+            "UF",
+            "Codigo IBGE",
+            "Pendente",
+        ],
+    )
+
+
+def _clean_editor_value(value: object, default: str = "") -> str:
+    if value is None or pd.isna(value):
+        return default
+    return str(value).strip()
+
+
+def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
+    rows: list[dict] = []
+    auto_filled = 0
+    for item in dataframe.to_dict("records"):
+        original = _clean_editor_value(item.get("Localidade original"))
+        if not original:
+            continue
+        municipality = _clean_editor_value(item.get("Municipio oficial"))
+        state = _clean_editor_value(item.get("UF"), "MG") or "MG"
+        ibge = _clean_editor_value(item.get("Codigo IBGE"))
+        resolved_name, resolved_state, resolved_code = resolve_municipality_fields(
+            original,
+            municipality,
+            state,
+            ibge,
+        )
+        if not ibge and resolved_code:
+            auto_filled += 1
+        rows.append(
+            {
+                "normalized_city": item.get("_normalized_city"),
+                "city_original": original,
+                "municipality_name": resolved_name,
+                "state": resolved_state,
+                "ibge_code": resolved_code,
+            }
+        )
+    return rows, auto_filled
+
+
 st.set_page_config(
     page_title="Informacoes das Rotas",
     page_icon=str(LOGO_PATH),
@@ -271,3 +334,36 @@ if save_matrix:
     except (ValueError, IntegrityError) as error:
         st.error(f"Nao foi possivel salvar a matriz: {error}")
 
+city_rows = list_city_registry()
+st.markdown("### Cidades e codigos IBGE")
+if not city_rows:
+    st.info("Salve a matriz para carregar as cidades aqui.")
+else:
+    city_registry = _city_registry_dataframe(city_rows)
+    edited_cities = st.data_editor(
+        city_registry,
+        hide_index=True,
+        width="stretch",
+        disabled=["_normalized_city", "Localidade original", "Pendente"],
+        column_config={
+            "_normalized_city": None,
+            "Localidade original": st.column_config.TextColumn(width="medium"),
+            "Municipio oficial": st.column_config.TextColumn(width="medium"),
+            "UF": st.column_config.TextColumn(width="small"),
+            "Codigo IBGE": st.column_config.TextColumn(width="small"),
+            "Pendente": st.column_config.CheckboxColumn(width="small"),
+        },
+        key="city_registry_editor",
+    )
+    if st.button("Salvar cidades e codigos", type="primary"):
+        try:
+            resolved_rows, auto_filled = _city_registry_rows(edited_cities)
+            save_city_registry(resolved_rows)
+            st.session_state.pop("weekly_holiday_results", None)
+            message = "Cidades e codigos IBGE salvos."
+            if auto_filled:
+                message += f" {auto_filled} codigo(s) preenchido(s) automaticamente."
+            st.session_state.route_matrix_save_notice = message
+            st.rerun()
+        except (ValueError, IntegrityError) as error:
+            st.error(f"Nao foi possivel salvar as cidades: {error}")
