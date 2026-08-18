@@ -241,11 +241,16 @@ SPREADSHEET_CSS = """
         box-shadow: 0 12px 28px rgba(7, 43, 88, .14), inset 0 1px 0 #fff;
         transform: translateY(-2px);
     }
-    .stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] > button[kind="primary"] {
-        color: #fff;
+    .stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] > button[kind="primary"],
+    [data-testid="stButton"] button[kind="primary"] {
+        color: #fff !important;
         border-color: rgba(255, 255, 255, .22);
         background: linear-gradient(120deg, var(--jr-blue), var(--jr-navy) 58%, #7f173e);
         box-shadow: 0 12px 28px rgba(7, 43, 88, .24), inset 0 1px 0 rgba(255, 255, 255, .22);
+    }
+    .stButton > button[kind="primary"] *, [data-testid="stFormSubmitButton"] > button[kind="primary"] *,
+    [data-testid="stButton"] button[kind="primary"] * {
+        color: #fff !important;
     }
     [data-testid="stTabs"] [data-baseweb="tab-list"] {
         gap: .45rem;
@@ -533,9 +538,7 @@ def apply_spreadsheet_style(active_page: str = "schedule") -> None:
     links = (
         ("schedule", "./", "▦", "Escala semanal"),
         ("route_info", "./Informacoes_de_Rotas", "☷", "Informações das rotas"),
-        ("routes", "./Cadastro_de_Rotas", "⇆", "Cadastro de rotas"),
         ("holidays", "./Feriados", "◈", "Feriados"),
-        ("settings", "./Configuracoes", "⚙", "Configurações"),
     )
     nav_links = "".join(
         f'<a class="{"active" if key == active_page else ""}" href="{href}" target="_self">'
