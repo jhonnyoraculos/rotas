@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import html
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy.exc import IntegrityError
+from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, JsCode
 
 from services.database import (
     count_route_weekday_profiles,
@@ -20,9 +20,7 @@ from ui.spreadsheet import (
     apply_spreadsheet_style,
     render_page_header,
 )
-from utils.city_normalizer import normalize_text
 from utils.dates import monday_of, today_in_brazil
-from utils.route_parser import extract_route_code
 
 DAY_LABELS = (
     "SEGUNDA - FEIRA",
@@ -31,29 +29,6 @@ DAY_LABELS = (
     "QUINTA - FEIRA",
     "SEXTA - FEIRA",
 )
-
-
-def _display_cell(value: object) -> str:
-    text = "" if value is None or pd.isna(value) else str(value).strip()
-    return text.lstrip("!* ").strip()
-
-
-def _cell_class(value: object) -> str:
-    text = "" if value is None or pd.isna(value) else str(value).strip()
-    display = _display_cell(text)
-    normalized = normalize_text(display)
-    if not display:
-        return "empty"
-    if text.startswith("!") or "CONDICAO" in normalized:
-        return "matrix-condition"
-    if (
-        text.startswith("*")
-        or extract_route_code(display)
-        or normalized.startswith("EXTRA ")
-        or "REGIAO" in normalized
-    ):
-        return "matrix-route"
-    return ""
 
 
 def _columns_dataframe(columns: dict[int, list[str]]) -> pd.DataFrame:
@@ -102,27 +77,86 @@ def _edited_columns(dataframe: pd.DataFrame) -> dict[int, list[str]]:
     return result
 
 
-def _render_matrix_preview(dataframe: pd.DataFrame) -> None:
-    parts = [
-        '<div class="route-sheet-shell route-matrix-preview">',
-        '<div class="route-sheet-desktop"><div class="route-sheet-scroll">',
-        '<table class="route-sheet matrix-sheet"><thead><tr>',
-    ]
+def _grid_options(dataframe: pd.DataFrame) -> dict:
+    builder = GridOptionsBuilder.from_dataframe(dataframe)
+    builder.configure_default_column(
+        editable=True,
+        filter=False,
+        resizable=True,
+        sortable=False,
+        suppressMenu=True,
+        wrapText=False,
+    )
+    cell_style = JsCode(
+        """
+        function(params) {
+            const raw = String(params.value || '').trim();
+            const text = raw.replace(/^[!*\\s]+/, '').trim();
+            const normalized = text
+                .normalize('NFD')
+                .replace(/[\\u0300-\\u036f]/g, '')
+                .toUpperCase();
+            if (!text) {
+                return {
+                    backgroundColor: 'rgba(255,255,255,.84)',
+                    color: 'transparent'
+                };
+            }
+            if (raw.startsWith('!') || normalized.includes('CONDICAO')) {
+                return {
+                    color: '#e00000',
+                    fontWeight: '520',
+                    backgroundColor: 'rgba(255,255,255,.90)'
+                };
+            }
+            if (
+                raw.startsWith('*') ||
+                /\\(?\\s*R\\s*\\.\\s*\\d+\\s*\\)?/i.test(text) ||
+                normalized.startsWith('EXTRA ') ||
+                normalized.includes('REGIAO')
+            ) {
+                return {
+                    color: '#050b14',
+                    fontWeight: '850',
+                    textAlign: 'center',
+                    backgroundColor: 'rgba(255,255,255,.92)'
+                };
+            }
+            return {
+                color: '#0f233d',
+                fontWeight: '430',
+                backgroundColor: 'rgba(255,255,255,.84)'
+            };
+        }
+        """
+    )
+    formatter = JsCode(
+        """
+        function(params) {
+            return String(params.value || '').replace(/^[!*\\s]+/, '').trim();
+        }
+        """
+    )
     for label in DAY_LABELS:
-        parts.append(f"<th>{html.escape(label)}</th>")
-    parts.append("</tr></thead><tbody>")
-    for _, row in dataframe.iterrows():
-        parts.append("<tr>")
-        for label in DAY_LABELS:
-            raw_value = row[label]
-            display = _display_cell(raw_value)
-            class_name = _cell_class(raw_value)
-            class_attr = f' class="{class_name}"' if class_name else ""
-            content = html.escape(display) if display else "&nbsp;"
-            parts.append(f"<td{class_attr}>{content}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody></table></div></div></div>")
-    st.markdown("".join(parts), unsafe_allow_html=True)
+        builder.configure_column(
+            label,
+            cellStyle=cell_style,
+            valueFormatter=formatter,
+            minWidth=245,
+        )
+    options = builder.build()
+    options["headerHeight"] = 28
+    options["rowHeight"] = 24
+    options["singleClickEdit"] = True
+    options["stopEditingWhenCellsLoseFocus"] = True
+    options["suppressMovableColumns"] = True
+    return options
+
+
+def _grid_data(response: object) -> pd.DataFrame:
+    data = response["data"] if isinstance(response, dict) else response.data
+    dataframe = pd.DataFrame(data)
+    return dataframe.reindex(columns=DAY_LABELS).fillna("")
 
 
 st.set_page_config(
@@ -166,38 +200,62 @@ matrix = (
     if saved_columns is not None
     else _matrix_dataframe(profiles)
 )
-unique_routes = {
-    profile.route.code
-    for profile in profiles
-    if getattr(profile, "route", None) is not None
-}
-unique_cities = {
-    city.city_original.casefold()
-    for profile in profiles
-    for city in profile.cities
+custom_css = {
+    ".ag-root-wrapper": {
+        "border": "0 !important",
+        "border-radius": "18px !important",
+        "overflow": "hidden !important",
+        "box-shadow": "0 18px 50px rgba(7, 43, 88, .12) !important",
+    },
+    ".ag-header": {
+        "background": "linear-gradient(145deg, #0c477f, #082f61) !important",
+        "border-bottom": "1px solid rgba(255,255,255,.18) !important",
+    },
+    ".ag-header-cell": {
+        "background": "transparent !important",
+        "border-right": "1px solid rgba(255,255,255,.18) !important",
+        "color": "#fff !important",
+    },
+    ".ag-header-cell-text": {
+        "color": "#fff !important",
+        "font-size": "14px !important",
+        "font-weight": "850 !important",
+        "text-transform": "uppercase !important",
+    },
+    ".ag-cell": {
+        "border-right": "1px solid rgba(7,43,88,.12) !important",
+        "border-bottom": "1px solid rgba(7,43,88,.12) !important",
+        "font-size": "12px !important",
+        "line-height": "22px !important",
+        "padding-left": "6px !important",
+        "padding-right": "6px !important",
+    },
+    ".ag-row-hover .ag-cell": {
+        "background-color": "rgba(235,245,255,.96) !important",
+    },
+    ".ag-cell-inline-editing": {
+        "background": "#fff !important",
+        "box-shadow": "inset 0 0 0 2px rgba(18,82,154,.48) !important",
+    },
 }
 
-metric_routes, metric_cities, metric_days = st.columns(3)
-metric_routes.metric("Rotas na matriz", len(unique_routes))
-metric_cities.metric("Cidades na matriz", len(unique_cities))
-metric_days.metric("Dias uteis", "5")
+grid_response = AgGrid(
+    matrix,
+    gridOptions=_grid_options(matrix),
+    height=min(max(420, len(matrix) * 24 + 48), 820),
+    data_return_mode=DataReturnMode.AS_INPUT,
+    update_on=["cellValueChanged"],
+    allow_unsafe_jscode=True,
+    theme="streamlit",
+    custom_css=custom_css,
+    key="route_matrix_grid",
+    show_search=False,
+    show_toolbar=False,
+    show_download_button=False,
+)
+edited = _grid_data(grid_response)
 
-with st.form("route_matrix_form"):
-    edited = st.data_editor(
-        matrix,
-        num_rows="dynamic",
-        hide_index=True,
-        width="stretch",
-        key="route_matrix_editor",
-        column_config={
-            label: st.column_config.TextColumn(
-                label,
-                width="large",
-            )
-            for label in DAY_LABELS
-        },
-    )
-    save_matrix = st.form_submit_button("Salvar matriz de rotas", type="primary")
+save_matrix = st.button("Salvar matriz de rotas", type="primary")
 
 if save_matrix:
     try:
@@ -213,9 +271,3 @@ if save_matrix:
     except (ValueError, IntegrityError) as error:
         st.error(f"Nao foi possivel salvar a matriz: {error}")
 
-st.caption(
-    "R.xxx fica como rota. CONDICAO ou ! no inicio fica vermelho. "
-    "* no inicio fica em negrito na visualizacao."
-)
-
-_render_matrix_preview(matrix)
