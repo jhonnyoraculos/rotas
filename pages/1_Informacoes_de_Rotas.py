@@ -24,7 +24,7 @@ from ui.spreadsheet import (
 )
 from utils.city_normalizer import resolve_municipality_fields
 from utils.dates import monday_of, today_in_brazil
-from utils.route_matrix import add_cities_to_route_block, route_choices_for_weekday
+from utils.route_matrix import add_cities_to_route_block
 
 DAY_LABELS = (
     "SEGUNDA-FEIRA",
@@ -141,11 +141,52 @@ def _grid_options(dataframe: pd.DataFrame) -> dict:
         }
         """
     )
+    route_renderer = JsCode(
+        r"""
+        function(params) {
+            const raw = String(params.value || '').trim();
+            const text = raw.replace(/^[!*\s]+/, '').trim();
+            const routeMatch = text.match(/\(?\s*R\s*\.\s*(\d+)\s*\)?/i);
+            if (!routeMatch) {
+                return text;
+            }
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'route-cell-with-action';
+
+            const label = document.createElement('span');
+            label.className = 'route-cell-label';
+            label.textContent = text;
+            wrapper.appendChild(label);
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'route-add-city-button';
+            button.textContent = '+';
+            button.title = 'Adicionar cidades a esta rota';
+            button.setAttribute('aria-label', 'Adicionar cidades a ' + text);
+            button.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                params.api.dispatchEvent({
+                    type: 'routeAddClicked',
+                    weekday: params.column.getColId(),
+                    routeCode: 'R.' + parseInt(routeMatch[1], 10),
+                    routeLabel: text,
+                    requestId: String(Date.now()) + '-' + Math.random().toString(16).slice(2)
+                });
+            });
+            wrapper.appendChild(button);
+            return wrapper;
+        }
+        """
+    )
     for label in DAY_LABELS:
         builder.configure_column(
             label,
             cellStyle=cell_style,
             valueFormatter=formatter,
+            cellRenderer=route_renderer,
             minWidth=245,
         )
     options = builder.build()
@@ -244,6 +285,71 @@ def _advance_route_matrix_grid() -> None:
     )
 
 
+def _grid_event_data(response: object) -> dict:
+    if isinstance(response, dict):
+        return response.get("eventData") or {}
+    return response.event_data or {}
+
+
+@st.dialog("Adicionar cidades à rota", width="large")
+def _render_add_cities_dialog(
+    columns: dict[int, list[str]],
+    weekday: int,
+    route_code: str,
+    route_label: str,
+    request_id: str,
+) -> None:
+    st.caption(
+        f"{DAY_LABELS[weekday].capitalize()} • {route_label}. "
+        "Cole uma ou várias cidades, uma em cada linha."
+    )
+    with st.form(f"route_add_dialog_{request_id}"):
+        new_cities_text = st.text_area(
+            "Novas cidades",
+            placeholder="Ex.: NOVA SERRANA\nPERDIGÃO\nARAÚJOS",
+            height=150,
+            key=f"route_add_text_{request_id}",
+        )
+        mark_as_condition = st.checkbox(
+            "Marcar todas como condição (texto vermelho)",
+            key=f"route_add_condition_{request_id}",
+        )
+        submitted = st.form_submit_button(
+            "Adicionar cidades", type="primary", width="stretch"
+        )
+
+    if not submitted:
+        return
+    try:
+        updated_columns, added_count = add_cities_to_route_block(
+            columns,
+            weekday,
+            route_code,
+            new_cities_text.splitlines(),
+            condition=mark_as_condition,
+        )
+        if not added_count:
+            st.warning(
+                "Informe ao menos uma cidade nova. Cidades repetidas não são "
+                "adicionadas novamente."
+            )
+            return
+        replace_weekday_route_matrix(
+            updated_columns,
+            reference_monday=monday_of(today_in_brazil()),
+        )
+        st.session_state.pop("weekly_holiday_results", None)
+        city_word = "cidade adicionada" if added_count == 1 else "cidades adicionadas"
+        st.session_state.route_matrix_save_notice = (
+            f"{added_count} {city_word} à rota {route_label} de "
+            f"{DAY_LABELS[weekday].lower()}."
+        )
+        _advance_route_matrix_grid()
+        st.rerun()
+    except (ValueError, IntegrityError) as error:
+        st.error(f"Não foi possível adicionar as cidades: {error}")
+
+
 st.set_page_config(
     page_title="Informações das Rotas",
     page_icon=str(LOGO_PATH),
@@ -286,77 +392,6 @@ matrix = (
     else _matrix_dataframe(profiles)
 )
 
-st.markdown("### Adicionar cidades à rota")
-st.caption(
-    "Escolha o dia e a rota. Você pode colar várias cidades, uma em cada linha. "
-    "A inclusão é salva automaticamente."
-)
-selected_weekday = st.selectbox(
-    "Dia da semana",
-    options=list(range(5)),
-    format_func=lambda weekday: DAY_LABELS[weekday].capitalize(),
-    key="new_city_weekday",
-)
-route_choices = route_choices_for_weekday(
-    _edited_columns(matrix), selected_weekday
-)
-if not route_choices:
-    st.info("Não há rotas cadastradas nesse dia.")
-else:
-    route_labels = {code: label for code, label in route_choices}
-    with st.form("add_route_cities_form"):
-        selected_route_code = st.selectbox(
-            "Rota",
-            options=list(route_labels),
-            format_func=lambda code: route_labels[code],
-        )
-        new_cities_text = st.text_area(
-            "Novas cidades",
-            placeholder="Digite uma cidade por linha\nEx.: NOVA SERRANA\nPERDIGÃO",
-            height=110,
-        )
-        mark_as_condition = st.checkbox(
-            "Marcar todas como condição (texto vermelho)"
-        )
-        add_cities = st.form_submit_button(
-            "Adicionar cidades à rota", type="primary"
-        )
-
-    if add_cities:
-        try:
-            city_names = new_cities_text.splitlines()
-            updated_columns, added_count = add_cities_to_route_block(
-                _edited_columns(matrix),
-                selected_weekday,
-                selected_route_code,
-                city_names,
-                condition=mark_as_condition,
-            )
-            if not added_count:
-                st.warning(
-                    "Informe ao menos uma cidade nova. Cidades repetidas não são "
-                    "adicionadas novamente."
-                )
-            else:
-                replace_weekday_route_matrix(
-                    updated_columns,
-                    reference_monday=monday_of(today_in_brazil()),
-                )
-                st.session_state.pop("weekly_holiday_results", None)
-                city_word = (
-                    "cidade adicionada"
-                    if added_count == 1
-                    else "cidades adicionadas"
-                )
-                st.session_state.route_matrix_save_notice = (
-                    f"{added_count} {city_word} à rota {route_labels[selected_route_code]} "
-                    f"de {DAY_LABELS[selected_weekday].lower()}."
-                )
-                _advance_route_matrix_grid()
-                st.rerun()
-        except (ValueError, IntegrityError) as error:
-            st.error(f"Não foi possível adicionar as cidades: {error}")
-
 custom_css = {
     ".ag-root-wrapper": {
         "border": "0 !important",
@@ -394,6 +429,41 @@ custom_css = {
         "background": "#fff !important",
         "box-shadow": "inset 0 0 0 2px rgba(18,82,154,.48) !important",
     },
+    ".route-cell-with-action": {
+        "display": "flex !important",
+        "align-items": "center !important",
+        "justify-content": "center !important",
+        "gap": "6px !important",
+        "width": "100% !important",
+        "height": "100% !important",
+    },
+    ".route-cell-label": {
+        "overflow": "hidden !important",
+        "text-overflow": "ellipsis !important",
+        "white-space": "nowrap !important",
+    },
+    ".route-add-city-button": {
+        "display": "inline-flex !important",
+        "align-items": "center !important",
+        "justify-content": "center !important",
+        "flex": "0 0 20px !important",
+        "width": "20px !important",
+        "height": "20px !important",
+        "padding": "0 !important",
+        "border": "1px solid rgba(18,82,154,.28) !important",
+        "border-radius": "50% !important",
+        "color": "#fff !important",
+        "background": "linear-gradient(145deg,#12529a,#8e123f) !important",
+        "font-size": "15px !important",
+        "font-weight": "800 !important",
+        "line-height": "1 !important",
+        "cursor": "pointer !important",
+        "box-shadow": "0 2px 6px rgba(7,43,88,.18) !important",
+    },
+    ".route-add-city-button:hover": {
+        "transform": "scale(1.08) !important",
+        "filter": "brightness(1.08) !important",
+    },
 }
 
 grid_version = st.session_state.get("route_matrix_grid_version", 0)
@@ -407,7 +477,7 @@ grid_response = AgGrid(
     gridOptions=_grid_options(matrix),
     height=min(max(420, len(matrix) * 24 + 48), 820),
     data_return_mode=DataReturnMode.AS_INPUT,
-    update_on=["cellValueChanged"],
+    update_on=["cellValueChanged", "routeAddClicked"],
     allow_unsafe_jscode=True,
     theme="streamlit",
     custom_css=custom_css,
@@ -417,6 +487,27 @@ grid_response = AgGrid(
     show_download_button=False,
 )
 edited = _grid_data(grid_response)
+
+grid_event = _grid_event_data(grid_response)
+if grid_event.get("streamlitRerunEventTriggerName") == "routeAddClicked":
+    request_id = str(grid_event.get("requestId") or "")
+    weekday_label = str(grid_event.get("weekday") or "")
+    route_code = str(grid_event.get("routeCode") or "")
+    route_label = str(grid_event.get("routeLabel") or route_code)
+    if (
+        request_id
+        and weekday_label in DAY_LABELS
+        and route_code
+        and st.session_state.get("handled_route_add_event") != request_id
+    ):
+        st.session_state.handled_route_add_event = request_id
+        _render_add_cities_dialog(
+            _edited_columns(edited),
+            DAY_LABELS.index(weekday_label),
+            route_code,
+            route_label,
+            request_id,
+        )
 
 save_matrix = st.button("Salvar matriz de rotas", type="primary")
 
