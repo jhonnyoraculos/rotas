@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
+from sqlalchemy import select
+
+from models import Route, RouteCity, RouteWeekdayCity, RouteWeekdayProfile
 from services import database
 from utils.city_normalizer import Municipality, resolve_municipality_fields
 
@@ -271,3 +274,105 @@ def test_city_registry_merge_prevents_duplicate_city_keys(
         for city in profile.cities
     ]
     assert monday_cities.count("MATEUS LEME") == 1
+
+
+def test_city_registry_save_merges_accented_legacy_duplicates(
+    monkeypatch, tmp_path
+) -> None:
+    url = f"sqlite:///{tmp_path / 'accented-duplicates.db'}"
+    database.initialize_database(url)
+    original_session_scope = database.session_scope
+    monkeypatch.setattr(
+        database,
+        "session_scope",
+        lambda: original_session_scope(url),
+    )
+
+    database.import_snapshot(
+        {
+            "R.50": {
+                "name": "SAO JOSE DA LAPA",
+                "cities": [
+                    {
+                        "city_original": "SAO JOSE DA LAPA",
+                        "municipality_name": None,
+                        "state": "MG",
+                        "ibge_code": None,
+                        "needs_review": True,
+                    },
+                ],
+                "weekdays": {
+                    0: {
+                        "name": "SAO JOSE DA LAPA",
+                        "cities": ["SAO JOSE DA LAPA"],
+                    },
+                },
+            }
+        },
+        {0: ["R.50"], 1: [], 2: [], 3: [], 4: []},
+        date(2026, 8, 17),
+    )
+
+    with database.session_scope() as session:
+        route = session.scalar(select(Route).where(Route.code == "R.50"))
+        assert route is not None
+        profile = session.scalar(
+            select(RouteWeekdayProfile).where(RouteWeekdayProfile.route_id == route.id)
+        )
+        assert profile is not None
+        session.add(
+            RouteCity(
+                route_id=route.id,
+                city_original="SÃO JOSÉ DA LAPA",
+                municipality_name=None,
+                normalized_city="SÃO JOSÉ DA LAPA",
+                state="MG",
+                ibge_code=None,
+                needs_review=True,
+            )
+        )
+        session.add(
+            RouteWeekdayCity(
+                profile_id=profile.id,
+                city_original="SÃO JOSÉ DA LAPA",
+                municipality_name=None,
+                normalized_city="SÃO JOSÉ DA LAPA",
+                state="MG",
+                ibge_code=None,
+                needs_review=True,
+                position=1,
+            )
+        )
+
+    database.save_city_registry(
+        [
+            {
+                "normalized_city": "SAO JOSE DA LAPA",
+                "city_original": "SÃO JOSE DA LAPA",
+                "municipality_name": "São José da Lapa",
+                "state": "MG",
+                "ibge_code": "3162955",
+            },
+            {
+                "normalized_city": "SÃO JOSÉ DA LAPA",
+                "city_original": "SÃO JOSÉ DA LAPA",
+                "municipality_name": "São José da Lapa",
+                "state": "MG",
+                "ibge_code": "3162955",
+            },
+        ]
+    )
+
+    registry = database.list_city_registry()
+    sao_jose_rows = [
+        item for item in registry if item["ibge_code"] == "3162955"
+    ]
+    assert len(sao_jose_rows) == 1
+
+    with database.session_scope() as session:
+        route = session.scalar(select(Route).where(Route.code == "R.50"))
+        assert route is not None
+        route_rows = list(
+            session.scalars(select(RouteCity).where(RouteCity.route_id == route.id))
+        )
+        assert len(route_rows) == 1
