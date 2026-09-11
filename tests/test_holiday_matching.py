@@ -19,6 +19,17 @@ from services.holidays import (
 )
 
 
+class DetachedWeekdayProfile:
+    def __init__(self, weekday, display_name, cities):
+        self.weekday = weekday
+        self.display_name = display_name
+        self.cities = cities
+
+    @property
+    def label(self):
+        raise AssertionError("nÃ£o deve acessar profile.label fora da sessÃ£o")
+
+
 class FakeProvider(HolidayProvider):
     def get_holidays(self, city, state, year, ibge_code=None):
         if city == "Mateus Leme":
@@ -132,9 +143,9 @@ def test_week_city_summary_uses_all_weekday_cities_without_route_day() -> None:
         label="ItaÃºna (R.40)",
         cities=[monday_city],
         weekday_profiles=[
-            SimpleNamespace(
+            DetachedWeekdayProfile(
                 weekday=1,
-                label="ItaÃºna (R.40)",
+                display_name="ItaÃºna",
                 cities=[tuesday_city],
             ),
         ],
@@ -180,7 +191,9 @@ def test_week_city_summary_deduplicates_same_city_in_the_day() -> None:
             name="Santa Luzia",
             label="Santa Luzia (R.100)",
             cities=[city],
-            weekday_profiles=[SimpleNamespace(weekday=1, cities=[city])],
+            weekday_profiles=[
+                DetachedWeekdayProfile(weekday=1, display_name="Santa Luzia", cities=[city])
+            ],
         ),
         SimpleNamespace(
             id=600,
@@ -188,7 +201,11 @@ def test_week_city_summary_deduplicates_same_city_in_the_day() -> None:
             name="Pedro Leopoldo",
             label="Pedro Leopoldo (R.600)",
             cities=[city],
-            weekday_profiles=[SimpleNamespace(weekday=1, cities=[city])],
+            weekday_profiles=[
+                DetachedWeekdayProfile(
+                    weekday=1, display_name="Pedro Leopoldo", cities=[city]
+                )
+            ],
         ),
     ]
     service = HolidayService(
