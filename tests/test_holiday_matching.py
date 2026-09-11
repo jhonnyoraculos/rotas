@@ -221,6 +221,67 @@ def test_week_city_summary_deduplicates_same_city_in_the_day() -> None:
     assert matches[0].routes == ("Santa Luzia (R.100)", "Pedro Leopoldo (R.600)")
 
 
+def test_week_city_summary_uses_database_rows_when_persisting(monkeypatch) -> None:
+    class RowProvider(OpenDatasetHolidayProvider):
+        def get_holidays(self, city, state, year, ibge_code=None):
+            return ProviderResult(
+                (
+                    Holiday(
+                        date(2026, 8, 18),
+                        "Feriado de Azurita",
+                        "Municipal",
+                        "teste",
+                    ),
+                ),
+                True,
+            )
+
+    def fake_city_rows(route_ids):
+        assert route_ids == [40]
+        return [
+            {
+                "route_id": 40,
+                "route_code": "R.40",
+                "route_name": "ItaÃºna",
+                "weekday": 1,
+                "display_name": "ItaÃºna",
+                "city_original": "AZURITA",
+                "municipality_name": "Azurita",
+                "state": "MG",
+                "ibge_code": "3107009",
+            }
+        ]
+
+    route = SimpleNamespace(
+        id=40,
+        code="R.40",
+        name="ItaÃºna",
+        label="ItaÃºna (R.40)",
+        cities=[],
+        weekday_profiles=[
+            DetachedWeekdayProfile(weekday=1, display_name="ItaÃºna", cities=[])
+        ],
+    )
+    monkeypatch.setattr(
+        "services.holidays.database.list_week_holiday_city_rows",
+        fake_city_rows,
+    )
+    monkeypatch.setattr(
+        "services.holidays.database.list_manual_holiday_cache", lambda year: []
+    )
+    service = HolidayService(
+        provider=RowProvider(),
+        persist=True,
+        general_loader=lambda year, state: [],
+    )
+
+    matches = service.match_week_cities({date(2026, 8, 18): [route]})
+
+    assert [(item.city, item.routes) for item in matches] == [
+        ("Azurita", ("ItaÃºna (R.40)",))
+    ]
+
+
 def test_provider_uses_bearer_authorization(monkeypatch) -> None:
     captured = {}
 

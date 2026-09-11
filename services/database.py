@@ -177,6 +177,65 @@ def list_route_weekday_profiles(
         return list(session.scalars(statement).unique())
 
 
+def list_week_holiday_city_rows(route_ids: Sequence[int]) -> list[dict]:
+    if not route_ids:
+        return []
+    unique_route_ids = list(dict.fromkeys(route_ids))
+    with session_scope() as session:
+        rows: list[dict] = []
+        base_rows = session.execute(
+            select(
+                Route.id.label("route_id"),
+                Route.code.label("route_code"),
+                Route.name.label("route_name"),
+                RouteCity.city_original.label("city_original"),
+                RouteCity.municipality_name.label("municipality_name"),
+                RouteCity.state.label("state"),
+                RouteCity.ibge_code.label("ibge_code"),
+            )
+            .join(RouteCity, RouteCity.route_id == Route.id)
+            .where(Route.id.in_(unique_route_ids))
+            .order_by(Route.id, RouteCity.id)
+        )
+        for row in base_rows:
+            rows.append(
+                {
+                    **row._mapping,
+                    "weekday": None,
+                    "display_name": row.route_name,
+                }
+            )
+
+        weekday_rows = session.execute(
+            select(
+                Route.id.label("route_id"),
+                Route.code.label("route_code"),
+                Route.name.label("route_name"),
+                RouteWeekdayProfile.weekday.label("weekday"),
+                RouteWeekdayProfile.display_name.label("display_name"),
+                RouteWeekdayCity.city_original.label("city_original"),
+                RouteWeekdayCity.municipality_name.label("municipality_name"),
+                RouteWeekdayCity.state.label("state"),
+                RouteWeekdayCity.ibge_code.label("ibge_code"),
+            )
+            .join(RouteWeekdayProfile, RouteWeekdayProfile.route_id == Route.id)
+            .join(
+                RouteWeekdayCity,
+                RouteWeekdayCity.profile_id == RouteWeekdayProfile.id,
+            )
+            .where(Route.id.in_(unique_route_ids))
+            .order_by(
+                Route.id,
+                RouteWeekdayProfile.weekday,
+                RouteWeekdayProfile.position,
+                RouteWeekdayCity.position,
+            )
+        )
+        for row in weekday_rows:
+            rows.append(dict(row._mapping))
+        return rows
+
+
 def save_route(
     route_id: int | None, code: str, name: str, active: bool = True
 ) -> Route:
