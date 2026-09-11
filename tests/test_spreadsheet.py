@@ -88,4 +88,6 @@ def test_city_holiday_summary_renders_week_cities(monkeypatch) -> None:
     assert "19/08/2026" in rendered[0]
     assert "Bom &lt;Despacho&gt;" in rendered[0]
     assert "Bom <Despacho>" not in rendered[0]
+    assert "Na rota: Bom Despacho (R.900)" in rendered[0]
     assert "Bom Despacho (R.900)" in rendered[0]
+    assert "Na malha" not in rendered[0]
