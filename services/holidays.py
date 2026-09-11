@@ -45,6 +45,17 @@ class HolidayMatch:
     source: str
 
 
+@dataclass(frozen=True)
+class CityHolidayMatch:
+    date: date
+    city: str
+    state: str
+    name: str
+    holiday_type: str
+    source: str
+    routes: tuple[str, ...] = ()
+
+
 def holiday_matches_for_display(
     matches: Iterable[HolidayMatch],
 ) -> list[HolidayMatch]:
@@ -461,6 +472,117 @@ class HolidayService:
             key=lambda item: (item.date, item.route_code, item.city, item.name),
         )
 
+    def match_week_cities(self, schedule: dict[date, list]) -> list[CityHolidayMatch]:
+        matches: list[CityHolidayMatch] = []
+        seen: set[tuple] = set()
+        general_by_year_state: dict[tuple[int, str], list[Holiday]] = {}
+        routes = self._routes_in_week(schedule)
+
+        for day in sorted(schedule):
+            state = "MG"
+            key = (day.year, state)
+            if key not in general_by_year_state:
+                general_by_year_state[key] = list(self.general_loader(day.year, state))
+            for item in general_by_year_state[key]:
+                if item.date != day:
+                    continue
+                city_label = (
+                    "Todas as cidades"
+                    if normalize_text(item.holiday_type) == "NACIONAL"
+                    else "Minas Gerais"
+                )
+                self._append_city_match(
+                    matches, seen, day, city_label, state, item, ()
+                )
+
+            for city, city_state, ibge_code, route_labels in self._weekday_cities(
+                routes, day.weekday()
+            ):
+                for item in self.city_holidays(city, city_state, day.year, ibge_code):
+                    if item.date != day:
+                        continue
+                    if normalize_text(item.holiday_type) in {
+                        "NACIONAL",
+                        "ESTADUAL",
+                    }:
+                        continue
+                    self._append_city_match(
+                        matches, seen, day, city, city_state, item, route_labels
+                    )
+
+        return sorted(
+            matches,
+            key=lambda item: (
+                item.date,
+                normalize_text(item.city),
+                normalize_text(item.name),
+            ),
+        )
+
+    @staticmethod
+    def _routes_in_week(schedule: dict[date, list]) -> list:
+        routes_by_id = {}
+        for routes in schedule.values():
+            for route in routes:
+                routes_by_id.setdefault(route.id, route)
+        return list(routes_by_id.values())
+
+    @staticmethod
+    def _weekday_cities(
+        routes: list, weekday: int
+    ) -> list[tuple[str, str, str | None, tuple[str, ...]]]:
+        grouped: dict[tuple[str, str], dict] = {}
+        for route in routes:
+            weekday_profile = next(
+                (
+                    profile
+                    for profile in getattr(route, "weekday_profiles", ())
+                    if profile.weekday == weekday
+                ),
+                None,
+            )
+            route_cities = (
+                weekday_profile.cities
+                if weekday_profile is not None
+                else route.cities
+            )
+            fallback_label = getattr(
+                route,
+                "label",
+                f"{getattr(route, 'name', '')} ({getattr(route, 'code', '')})",
+            )
+            route_label = (
+                getattr(weekday_profile, "label", fallback_label)
+                if weekday_profile is not None
+                else fallback_label
+            )
+            for route_city in route_cities:
+                city = route_city.holiday_city
+                state = route_city.state
+                ibge_code = route_city.ibge_code
+                key = (str(ibge_code) if ibge_code else normalize_text(city), state)
+                entry = grouped.setdefault(
+                    key,
+                    {
+                        "city": city,
+                        "state": state,
+                        "ibge_code": ibge_code,
+                        "routes": [],
+                    },
+                )
+                if route_label not in entry["routes"]:
+                    entry["routes"].append(route_label)
+
+        return [
+            (
+                entry["city"],
+                entry["state"],
+                entry["ibge_code"],
+                tuple(entry["routes"]),
+            )
+            for entry in grouped.values()
+        ]
+
     @staticmethod
     def _append_match(
         matches: list[HolidayMatch],
@@ -484,5 +606,37 @@ class HolidayService:
                 name=holiday.name,
                 holiday_type=holiday.holiday_type,
                 source=holiday.source,
+            )
+        )
+
+    @staticmethod
+    def _append_city_match(
+        matches: list[CityHolidayMatch],
+        seen: set[tuple],
+        day: date,
+        city: str,
+        state: str,
+        holiday: Holiday,
+        routes: tuple[str, ...],
+    ) -> None:
+        key = (
+            day,
+            normalize_text(city),
+            state,
+            normalize_text(holiday.name),
+            normalize_text(holiday.holiday_type),
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        matches.append(
+            CityHolidayMatch(
+                date=day,
+                city=city,
+                state=state,
+                name=holiday.name,
+                holiday_type=holiday.holiday_type,
+                source=holiday.source,
+                routes=routes,
             )
         )

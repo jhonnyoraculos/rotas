@@ -20,6 +20,7 @@ from services.holidays import HolidayService, holiday_matches_for_display
 from ui.spreadsheet import (
     LOGO_PATH,
     apply_spreadsheet_style,
+    render_city_holiday_summary,
     render_page_header,
     render_schedule_table,
     schedule_dataframe,
@@ -131,7 +132,6 @@ schedule_signature = tuple(
                         ),
                     )
                     for profile in getattr(route, "weekday_profiles", ())
-                    if profile.weekday == day.weekday()
                 ),
                 tuple(
                     (
@@ -150,20 +150,28 @@ schedule_signature = tuple(
 )
 holiday_cache_key = (schedule_signature, int(time() // 900))
 holiday_cache = st.session_state.get("weekly_holiday_results")
-if holiday_cache and holiday_cache["key"] == holiday_cache_key:
+if (
+    holiday_cache
+    and holiday_cache["key"] == holiday_cache_key
+    and "city_matches" in holiday_cache
+):
     matches = holiday_cache["matches"]
+    city_matches = holiday_cache["city_matches"]
     holiday_warnings = holiday_cache["warnings"]
 else:
     with st.spinner("Verificando feriados da semana..."):
         holiday_service = HolidayService()
         matches = holiday_service.match_week(schedule)
+        city_matches = holiday_service.match_week_cities(schedule)
         holiday_warnings = set(holiday_service.warnings)
     st.session_state.weekly_holiday_results = {
         "key": holiday_cache_key,
         "matches": matches,
+        "city_matches": city_matches,
         "warnings": holiday_warnings,
     }
 
+render_city_holiday_summary(city_matches)
 render_schedule_table(monday, schedule, matches)
 
 with st.container(key="schedule_actions"):

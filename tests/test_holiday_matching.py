@@ -110,6 +110,100 @@ def test_holiday_matching_uses_cities_from_the_correct_weekday() -> None:
     ]
 
 
+def test_week_city_summary_uses_all_weekday_cities_without_route_day() -> None:
+    class WeekCityProvider(HolidayProvider):
+        def get_holidays(self, city, state, year, ibge_code=None):
+            holidays_by_city = {
+                "Azurita": Holiday(
+                    date(2026, 8, 18), "Feriado de Azurita", "Municipal", "teste"
+                ),
+            }
+            holiday = holidays_by_city.get(city)
+            return ProviderResult((holiday,) if holiday else (), True)
+
+    monday_city = SimpleNamespace(
+        holiday_city="Mateus Leme", state="MG", ibge_code="3140704"
+    )
+    tuesday_city = SimpleNamespace(holiday_city="Azurita", state="MG", ibge_code=None)
+    route = SimpleNamespace(
+        id=40,
+        code="R.40",
+        name="ItaÃºna",
+        label="ItaÃºna (R.40)",
+        cities=[monday_city],
+        weekday_profiles=[
+            SimpleNamespace(
+                weekday=1,
+                label="ItaÃºna (R.40)",
+                cities=[tuesday_city],
+            ),
+        ],
+    )
+    service = HolidayService(
+        provider=WeekCityProvider(),
+        persist=False,
+        general_loader=lambda year, state: [],
+    )
+
+    matches = service.match_week_cities(
+        {
+            date(2026, 8, 17): [route],
+            date(2026, 8, 18): [],
+        }
+    )
+
+    assert [(item.date, item.city, item.routes) for item in matches] == [
+        (date(2026, 8, 18), "Azurita", ("ItaÃºna (R.40)",))
+    ]
+
+
+def test_week_city_summary_deduplicates_same_city_in_the_day() -> None:
+    class DuplicateCityProvider(HolidayProvider):
+        def get_holidays(self, city, state, year, ibge_code=None):
+            return ProviderResult(
+                (
+                    Holiday(
+                        date(2026, 8, 18),
+                        "Feriado de Contagem",
+                        "Municipal",
+                        "teste",
+                    ),
+                ),
+                True,
+            )
+
+    city = SimpleNamespace(holiday_city="Contagem", state="MG", ibge_code="3118601")
+    routes = [
+        SimpleNamespace(
+            id=100,
+            code="R.100",
+            name="Santa Luzia",
+            label="Santa Luzia (R.100)",
+            cities=[city],
+            weekday_profiles=[SimpleNamespace(weekday=1, cities=[city])],
+        ),
+        SimpleNamespace(
+            id=600,
+            code="R.600",
+            name="Pedro Leopoldo",
+            label="Pedro Leopoldo (R.600)",
+            cities=[city],
+            weekday_profiles=[SimpleNamespace(weekday=1, cities=[city])],
+        ),
+    ]
+    service = HolidayService(
+        provider=DuplicateCityProvider(),
+        persist=False,
+        general_loader=lambda year, state: [],
+    )
+
+    matches = service.match_week_cities({date(2026, 8, 18): routes})
+
+    assert len(matches) == 1
+    assert matches[0].city == "Contagem"
+    assert matches[0].routes == ("Santa Luzia (R.100)", "Pedro Leopoldo (R.600)")
+
+
 def test_provider_uses_bearer_authorization(monkeypatch) -> None:
     captured = {}
 
