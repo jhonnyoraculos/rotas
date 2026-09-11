@@ -551,11 +551,16 @@ class HolidayService:
                 "label",
                 f"{getattr(route, 'name', '')} ({getattr(route, 'code', '')})",
             )
-            route_label = (
-                getattr(weekday_profile, "label", fallback_label)
-                if weekday_profile is not None
-                else fallback_label
-            )
+            if weekday_profile is not None:
+                display_name = getattr(weekday_profile, "display_name", None)
+                route_code = getattr(route, "code", "")
+                route_label = (
+                    f"{display_name} ({route_code})"
+                    if display_name and route_code
+                    else fallback_label
+                )
+            else:
+                route_label = fallback_label
             for route_city in route_cities:
                 city = route_city.holiday_city
                 state = route_city.state
