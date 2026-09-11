@@ -477,6 +477,12 @@ class HolidayService:
         seen: set[tuple] = set()
         general_by_year_state: dict[tuple[int, str], list[Holiday]] = {}
         routes = self._routes_in_week(schedule)
+        route_ids = [route.id for route in routes]
+        weekday_city_rows = (
+            database.list_week_holiday_city_rows(route_ids)
+            if self.persist and route_ids
+            else []
+        )
 
         for day in sorted(schedule):
             state = "MG"
@@ -495,9 +501,12 @@ class HolidayService:
                     matches, seen, day, city_label, state, item, ()
                 )
 
-            for city, city_state, ibge_code, route_labels in self._weekday_cities(
-                routes, day.weekday()
-            ):
+            weekday_cities = (
+                self._weekday_cities_from_rows(weekday_city_rows, day.weekday())
+                if weekday_city_rows
+                else self._weekday_cities(routes, day.weekday())
+            )
+            for city, city_state, ibge_code, route_labels in weekday_cities:
                 for item in self.city_holidays(city, city_state, day.year, ibge_code):
                     if item.date != day:
                         continue
@@ -577,6 +586,51 @@ class HolidayService:
                 )
                 if route_label not in entry["routes"]:
                     entry["routes"].append(route_label)
+
+        return [
+            (
+                entry["city"],
+                entry["state"],
+                entry["ibge_code"],
+                tuple(entry["routes"]),
+            )
+            for entry in grouped.values()
+        ]
+
+    @staticmethod
+    def _weekday_cities_from_rows(
+        rows: list[dict], weekday: int
+    ) -> list[tuple[str, str, str | None, tuple[str, ...]]]:
+        route_has_weekday_profile = {
+            row["route_id"]
+            for row in rows
+            if row.get("weekday") == weekday
+        }
+        grouped: dict[tuple[str, str], dict] = {}
+        for row in rows:
+            row_weekday = row.get("weekday")
+            if row_weekday is None:
+                if row["route_id"] in route_has_weekday_profile:
+                    continue
+            elif row_weekday != weekday:
+                continue
+
+            city = row.get("municipality_name") or row["city_original"]
+            state = row.get("state") or "MG"
+            ibge_code = row.get("ibge_code")
+            route_label = f"{row['display_name']} ({row['route_code']})"
+            key = (str(ibge_code) if ibge_code else normalize_text(city), state)
+            entry = grouped.setdefault(
+                key,
+                {
+                    "city": city,
+                    "state": state,
+                    "ibge_code": ibge_code,
+                    "routes": [],
+                },
+            )
+            if route_label not in entry["routes"]:
+                entry["routes"].append(route_label)
 
         return [
             (
