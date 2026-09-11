@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-from ui.spreadsheet import render_holiday_cards, render_schedule_table
+from ui.spreadsheet import (
+    render_city_holiday_summary,
+    render_holiday_cards,
+    render_schedule_table,
+)
 
 
 def test_alert_cell_expands_its_holiday_details_inline(monkeypatch) -> None:
@@ -60,3 +64,28 @@ def test_holiday_cards_render_a_safe_mobile_version(monkeypatch) -> None:
     assert "Bom Despacho" in rendered[0]
     assert "Feriado &lt;Municipal&gt;" in rendered[0]
     assert "Feriado <Municipal>" not in rendered[0]
+
+
+def test_city_holiday_summary_renders_week_cities(monkeypatch) -> None:
+    entry = SimpleNamespace(
+        date=date(2026, 8, 19),
+        city="Bom <Despacho>",
+        state="MG",
+        name="AssunÃ§Ã£o de Nossa Senhora",
+        holiday_type="Municipal",
+        routes=("Bom Despacho (R.900)",),
+    )
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        "ui.spreadsheet.st.markdown",
+        lambda content, **kwargs: rendered.append(content),
+    )
+
+    render_city_holiday_summary([entry])
+
+    assert len(rendered) == 1
+    assert '<section class="city-holiday-shell">' in rendered[0]
+    assert "19/08/2026" in rendered[0]
+    assert "Bom &lt;Despacho&gt;" in rendered[0]
+    assert "Bom <Despacho>" not in rendered[0]
+    assert "Bom Despacho (R.900)" in rendered[0]

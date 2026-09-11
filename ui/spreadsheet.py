@@ -324,6 +324,72 @@ SPREADSHEET_CSS = """
     .sheet-caption {color: var(--jr-muted); font-size: 13px; margin: 0 0 .75rem;}
     .mobile-table-hint {display: none;}
     .holiday-mobile-list {display: none;}
+    .city-holiday-shell {
+        margin: .7rem 0 1rem;
+        padding: .95rem 1rem;
+        border: 1px solid rgba(255, 255, 255, .84);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, .58);
+        box-shadow: var(--jr-shadow);
+        backdrop-filter: blur(20px) saturate(150%);
+    }
+    .city-holiday-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        margin-bottom: .65rem;
+        color: var(--jr-ink);
+        font-size: .98rem;
+        font-weight: 820;
+    }
+    .city-holiday-count {
+        flex: 0 0 auto;
+        padding: .26rem .55rem;
+        color: var(--jr-blue);
+        font-size: .7rem;
+        font-weight: 760;
+        border: 1px solid rgba(18, 82, 154, .16);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, .60);
+    }
+    .city-holiday-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: .55rem;
+    }
+    .city-holiday-card {
+        overflow: hidden;
+        border: 1px solid rgba(7,43,88,.09);
+        border-radius: 14px;
+        background: rgba(255,255,255,.72);
+    }
+    .city-holiday-date {
+        padding: .55rem .65rem;
+        color: #fff;
+        font-size: .74rem;
+        font-weight: 820;
+        text-transform: uppercase;
+        background: linear-gradient(145deg, #0c477f, #082f61);
+    }
+    .city-holiday-item {
+        padding: .62rem .65rem;
+        color: var(--jr-ink);
+        font-size: .77rem;
+        line-height: 1.35;
+        border-top: 1px solid rgba(7,43,88,.08);
+    }
+    .city-holiday-city {font-weight: 820;}
+    .city-holiday-name {margin-top: .15rem;}
+    .city-holiday-meta {
+        margin-top: .18rem;
+        color: var(--jr-muted);
+        font-size: .67rem;
+    }
+    .city-holiday-empty {
+        color: var(--jr-muted);
+        font-size: .82rem;
+    }
     .route-info-grid {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -494,6 +560,9 @@ SPREADSHEET_CSS = """
         }
         .route-mobile-empty {padding: .8rem; color: var(--jr-muted); font-size: .8rem; text-align: center;}
         .holiday-mobile-list {display: grid; gap: .65rem;}
+        .city-holiday-shell {padding: .72rem; border-radius: 16px;}
+        .city-holiday-title {align-items: flex-start; font-size: .9rem;}
+        .city-holiday-grid {grid-template-columns: 1fr;}
         .holiday-mobile-card {
             padding: .85rem;
             border: 1px solid rgba(255,255,255,.84);
@@ -683,6 +752,64 @@ def render_schedule_table(
         mobile_parts.append("</section>")
     mobile_parts.append("</div></div>")
     st.markdown("".join([*desktop_parts, *mobile_parts]), unsafe_allow_html=True)
+
+
+def render_city_holiday_summary(entries: list) -> None:
+    if not entries:
+        st.markdown(
+            '<section class="city-holiday-shell">'
+            '<div class="city-holiday-title">'
+            "<span>Feriados por cidade na semana</span>"
+            '<span class="city-holiday-count">0 cidades</span>'
+            "</div>"
+            '<div class="city-holiday-empty">Nenhum feriado encontrado nas cidades cadastradas para esta semana.</div>'
+            "</section>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    grouped: dict[date, list] = {}
+    cities = set()
+    for item in entries:
+        grouped.setdefault(item.date, []).append(item)
+        if item.city not in {"Todas as cidades", "Minas Gerais"}:
+            cities.add(normalize_text(item.city))
+
+    city_word = "cidade" if len(cities) == 1 else "cidades"
+    parts = [
+        '<section class="city-holiday-shell">',
+        '<div class="city-holiday-title">',
+        "<span>Feriados por cidade na semana</span>",
+        f'<span class="city-holiday-count">{len(cities)} {city_word}</span>',
+        "</div>",
+        '<div class="city-holiday-grid">',
+    ]
+    for holiday_date in sorted(grouped):
+        parts.append(
+            '<article class="city-holiday-card">'
+            f'<div class="city-holiday-date">{holiday_date:%d/%m/%Y}</div>'
+        )
+        for item in grouped[holiday_date]:
+            routes = ""
+            if getattr(item, "routes", ()):
+                routes = (
+                    '<div class="city-holiday-meta">Na malha: '
+                    f"{html.escape(', '.join(item.routes))}</div>"
+                )
+            parts.append(
+                '<div class="city-holiday-item">'
+                f'<div class="city-holiday-city">{html.escape(item.city)}</div>'
+                f'<div class="city-holiday-name">{html.escape(item.name)}</div>'
+                '<div class="city-holiday-meta">'
+                f"{html.escape(item.holiday_type)}"
+                f" • {html.escape(item.state)}"
+                "</div>"
+                f"{routes}"
+                "</div>"
+            )
+        parts.append("</article>")
+    parts.append("</div></section>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 def render_holiday_cards(entries: list) -> None:
