@@ -792,8 +792,9 @@ def render_city_holiday_summary(entries: list) -> None:
         for item in grouped[holiday_date]:
             routes = ""
             if getattr(item, "routes", ()):
+                route_label = "Na rota" if len(item.routes) == 1 else "Nas rotas"
                 routes = (
-                    '<div class="city-holiday-meta">Na malha: '
+                    f'<div class="city-holiday-meta">{route_label}: '
                     f"{html.escape(', '.join(item.routes))}</div>"
                 )
             parts.append(
