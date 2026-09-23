@@ -94,7 +94,9 @@ def columns_to_board(columns: dict[int, Sequence[object]]) -> dict:
     return {"days": days}
 
 
-def board_to_columns(board: dict) -> dict[int, list[str]]:
+def board_to_columns(
+    board: dict, *, enforce_unique_cities: bool = True
+) -> dict[int, list[str]]:
     """Converte o planner de volta ao mesmo formato consumido pelo banco atual."""
     result: dict[int, list[str]] = {weekday: [] for weekday in range(5)}
     days = board.get("days") if isinstance(board, dict) else None
@@ -113,6 +115,7 @@ def board_to_columns(board: dict) -> dict[int, list[str]]:
             continue
         seen_weekdays.add(weekday)
         seen_codes: set[str] = set()
+        day_cities: dict[str, str] = {}
         for item in day.get("items", []):
             if not isinstance(item, dict):
                 continue
@@ -142,13 +145,25 @@ def board_to_columns(board: dict) -> dict[int, list[str]]:
                     continue
                 city_name = _clean(city.get("name")).lstrip("!* ").strip()
                 normalized = normalize_text(city_name)
-                if not normalized or normalized in seen_cities:
+                if not normalized:
                     continue
+                if normalized in seen_cities:
+                    if enforce_unique_cities:
+                        raise ValueError(
+                            f"A cidade {city_name} aparece mais de uma vez na rota {code}."
+                        )
+                    continue
+                if enforce_unique_cities and normalized in day_cities:
+                    raise ValueError(
+                        f"A cidade {city_name} já está na rota "
+                        f"{day_cities[normalized]} neste dia."
+                    )
                 if extract_route_code(city_name):
                     raise ValueError(
                         "O nome da cidade não pode conter um código de rota."
                     )
                 seen_cities.add(normalized)
+                day_cities.setdefault(normalized, code)
                 prefix = "!" if bool(city.get("condition")) else ""
                 result[weekday].append(f"{prefix}{city_name}")
     return result

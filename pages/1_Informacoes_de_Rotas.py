@@ -74,7 +74,9 @@ def _ensure_planner_state(columns: dict[int, list[str]]) -> None:
 
 
 def _apply_board_change(updated: dict) -> None:
-    board_to_columns(updated)
+    # Duplicidades legadas precisam poder ser removidas gradualmente. A validação
+    # estrita continua sendo aplicada ao salvar e em cada operação de inclusão.
+    board_to_columns(updated, enforce_unique_cities=False)
     previous = st.session_state.route_planner_draft
     if board_signature(previous) == board_signature(updated):
         return
@@ -113,6 +115,52 @@ def _parse_city_lines(text: str) -> list[dict]:
     return rows
 
 
+def _day_city_names(
+    day: dict,
+    *,
+    exclude_route_id: str | None = None,
+    exclude_city_id: str | None = None,
+) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for item in day.get("items", []):
+        if item.get("kind") != "route" or item.get("id") == exclude_route_id:
+            continue
+        for city in item.get("cities", []):
+            if city.get("id") == exclude_city_id:
+                continue
+            normalized = normalize_text(city.get("name"))
+            if normalized:
+                names.setdefault(normalized, str(city.get("name", "")).strip())
+    return names
+
+
+def _city_conflicts(
+    day: dict,
+    cities: list[dict],
+    *,
+    exclude_route_id: str | None = None,
+    exclude_city_id: str | None = None,
+) -> list[str]:
+    existing = _day_city_names(
+        day,
+        exclude_route_id=exclude_route_id,
+        exclude_city_id=exclude_city_id,
+    )
+    return [
+        city["name"]
+        for city in cities
+        if normalize_text(city.get("name")) in existing
+    ]
+
+
+def _show_city_conflicts(conflicts: list[str]) -> None:
+    names = ", ".join(dict.fromkeys(conflicts))
+    st.error(
+        f"A cidade {names} já está cadastrada neste dia. "
+        "Uma cidade não pode aparecer em duas rotas do mesmo dia."
+    )
+
+
 @st.dialog("Nova rota", width="large")
 def _new_route_dialog() -> None:
     board = st.session_state.route_planner_draft
@@ -148,6 +196,10 @@ def _new_route_dialog() -> None:
         cities = _parse_city_lines(cities_text)
     except ValueError as error:
         st.error(str(error))
+        return
+    conflicts = _city_conflicts(day, cities)
+    if conflicts:
+        _show_city_conflicts(conflicts)
         return
     updated = clone_board(board)
     updated["days"][weekday]["items"].append(
@@ -221,6 +273,10 @@ def _edit_route_dialog(route_id: str) -> None:
     except ValueError as error:
         st.error(str(error))
         return
+    conflicts = _city_conflicts(day, cities, exclude_route_id=route_id)
+    if conflicts:
+        _show_city_conflicts(conflicts)
+        return
     updated = clone_board(board)
     for candidate_day in updated["days"]:
         for candidate in candidate_day["items"]:
@@ -255,12 +311,12 @@ def _add_city_dialog(route_id: str) -> None:
     except ValueError as error:
         st.error(str(error))
         return
-    existing = {normalize_text(city["name"]) for city in route.get("cities", [])}
-    additions = [
-        city for city in additions if normalize_text(city["name"]) not in existing
-    ]
     if not additions:
-        st.warning("Informe ao menos uma cidade que ainda não esteja nesta rota.")
+        st.warning("Informe ao menos uma cidade.")
+        return
+    conflicts = _city_conflicts(day, additions)
+    if conflicts:
+        _show_city_conflicts(conflicts)
         return
     if condition:
         for city in additions:
@@ -294,13 +350,13 @@ def _edit_city_dialog(city_id: str) -> None:
     if not clean_name or extract_route_code(clean_name):
         st.error("Informe uma cidade válida, sem código de rota.")
         return
-    duplicate = any(
-        item["id"] != city_id
-        and normalize_text(item["name"]) == normalize_text(clean_name)
-        for item in route.get("cities", [])
+    conflicts = _city_conflicts(
+        day,
+        [{"name": clean_name}],
+        exclude_city_id=city_id,
     )
-    if duplicate:
-        st.error("Esta cidade já existe no bloco da rota.")
+    if conflicts:
+        _show_city_conflicts(conflicts)
         return
     updated = clone_board(board)
     updated_found = find_city(updated, city_id)

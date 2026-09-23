@@ -59,6 +59,53 @@ def test_board_signature_detects_removing_one_duplicate_city() -> None:
     assert board_signature(updated) != board_signature(board)
 
 
+def test_route_planner_rejects_duplicate_city_inside_route() -> None:
+    board = columns_to_board(
+        {0: ["ITAÚNA (R.40)", "AZURITA", "AZURITA"]}
+    )
+
+    try:
+        board_to_columns(board)
+    except ValueError as error:
+        assert "mais de uma vez na rota R.40" in str(error)
+    else:
+        raise AssertionError("Era esperado erro para cidade duplicada na rota")
+
+
+def test_route_planner_rejects_same_city_in_two_routes_on_same_day() -> None:
+    board = columns_to_board(
+        {
+            0: [
+                "ITAÚNA (R.40)",
+                "AZURITA",
+                "PARÁ DE MINAS (R.41)",
+                "AZURITA",
+            ]
+        }
+    )
+
+    try:
+        board_to_columns(board)
+    except ValueError as error:
+        assert "já está na rota R.40 neste dia" in str(error)
+    else:
+        raise AssertionError("Era esperado erro para cidade duplicada no dia")
+
+
+def test_route_planner_allows_same_city_on_different_days() -> None:
+    board = columns_to_board(
+        {
+            0: ["ITAÚNA (R.40)", "AZURITA"],
+            1: ["PARÁ DE MINAS (R.41)", "AZURITA"],
+        }
+    )
+
+    rebuilt = board_to_columns(board)
+
+    assert rebuilt[0][-1] == "AZURITA"
+    assert rebuilt[1][-1] == "AZURITA"
+
+
 def test_route_planner_rejects_duplicate_route_in_same_day() -> None:
     board = columns_to_board({0: ["A (R.10)", "A1"]})
     board["days"][0]["items"].append(
