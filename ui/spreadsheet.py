@@ -606,7 +606,7 @@ def apply_spreadsheet_style(active_page: str = "schedule") -> None:
     st.markdown(SPREADSHEET_CSS, unsafe_allow_html=True)
     links = (
         ("schedule", "./", "▦", "Escala semanal"),
-        ("route_info", "./Informacoes_de_Rotas", "☷", "Informações das rotas"),
+        ("route_info", "./Informacoes_de_Rotas", "⌁", "Rotas"),
         ("holidays", "./Feriados", "◈", "Feriados"),
     )
     nav_links = "".join(
