@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date, timedelta
+from datetime import timedelta
 
-import pandas as pd
 import streamlit as st
 
 from services.database import (
@@ -14,7 +13,6 @@ from services.database import (
     list_routes,
     load_week_holiday_snapshot,
     load_week_schedule,
-    replace_schedule_day,
     save_week_holiday_snapshot,
 )
 from services.excel_exporter import export_week_to_excel
@@ -32,15 +30,14 @@ from ui.spreadsheet import (
     render_city_holiday_summary,
     render_page_header,
     render_schedule_table,
-    schedule_dataframe,
 )
-from utils.dates import business_week, monday_of, today_in_brazil, week_title
-from utils.route_parser import extract_route_code
+from utils.dates import monday_of, today_in_brazil, week_title
 
 st.set_page_config(
     page_title="Escala de Rotas", page_icon=str(LOGO_PATH), layout="wide"
 )
 role = require_auth()
+st.session_state.pop("editing", None)
 apply_spreadsheet_style()
 render_account_sidebar(role)
 render_page_header(
@@ -231,79 +228,15 @@ render_city_holiday_summary(city_matches)
 render_schedule_table(monday, schedule, matches)
 
 with st.container(key="schedule_actions"):
-    action_columns = st.columns(2) if is_admin(role) else st.columns(1)
-    if is_admin(role):
-        button_col, export_col = action_columns
-        with button_col:
-            if st.button(
-                "Fechar edição" if st.session_state.get("editing") else "Editar escala",
-                width="stretch",
-            ):
-                st.session_state.editing = not st.session_state.get("editing", False)
-                st.rerun()
-    else:
-        export_col = action_columns[0]
-    with export_col:
-        export_bytes = export_week_to_excel(monday, schedule, matches)
-        st.download_button(
-            "📥 Exportar Excel",
-            data=export_bytes,
-            file_name=f"escala_{monday:%Y-%m-%d}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
-
-if is_admin(role) and st.session_state.get("editing"):
-    st.markdown("#### Editar escala")
-    st.caption(
-        "Digite ou cole o código (ex.: R.40) ou o nome completo. Linhas vazias são ignoradas; "
-        "a ordem das células define a posição no dia."
+    st.caption("Para alterar rotas e cidades, use o planejador visual na tela Rotas.")
+    export_bytes = export_week_to_excel(monday, schedule, matches)
+    st.download_button(
+        "📥 Exportar Excel",
+        data=export_bytes,
+        file_name=f"escala_{monday:%Y-%m-%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
     )
-    st.markdown(
-        '<div class="mobile-table-hint">Deslize a tabela para os lados para editar os outros dias.</div>',
-        unsafe_allow_html=True,
-    )
-    with st.form(f"schedule_form_{monday.isoformat()}"):
-        original = schedule_dataframe(monday, schedule)
-        edited = st.data_editor(
-            original,
-            num_rows="dynamic",
-            hide_index=True,
-            width="stretch",
-            key=f"schedule_editor_{monday.isoformat()}",
-        )
-        save_schedule = st.form_submit_button("Salvar alterações", type="primary")
-    if save_schedule:
-        routes_by_code = {route.code: route for route in routes}
-        routes_by_label = {route.label.casefold(): route for route in routes}
-        invalid: list[str] = []
-        resolved: dict[date, list[int]] = {}
-        for column_index, column in enumerate(edited.columns):
-            day = business_week(monday)[column_index]
-            ids: list[int] = []
-            for raw in edited[column].tolist():
-                if pd.isna(raw) or not str(raw).strip():
-                    continue
-                value = str(raw).strip()
-                code = extract_route_code(value)
-                route = (
-                    routes_by_code.get(code)
-                    if code
-                    else routes_by_label.get(value.casefold())
-                )
-                if route is None:
-                    invalid.append(f"{column}: {value}")
-                else:
-                    ids.append(route.id)
-            resolved[day] = ids
-        if invalid:
-            st.error("Rotas não reconhecidas: " + "; ".join(invalid))
-        else:
-            for day, route_ids in resolved.items():
-                replace_schedule_day(day, route_ids)
-            st.session_state.pop("weekly_holiday_results", None)
-            st.success("Escala salva.")
-            st.rerun()
 
 st.markdown("### Feriados encontrados nesta semana")
 display_matches = holiday_matches_for_display(matches)
