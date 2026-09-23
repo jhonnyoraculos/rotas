@@ -67,30 +67,37 @@ SPREADSHEET_CSS = """
         gap: .7rem;
         border: 1px solid transparent;
         border-radius: 14px;
-        color: rgba(255, 255, 255, .80);
+        color: rgba(255, 255, 255, .88) !important;
         margin: 3px 0;
         padding: .7rem .8rem;
         font-size: .9rem;
         font-weight: 650;
         text-decoration: none;
+        opacity: 1 !important;
         transition: background .22s ease, border-color .22s ease, transform .22s ease;
     }
-    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] a p {
-        color: inherit;
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] a * {
+        color: inherit !important;
         font-size: inherit;
         font-weight: inherit;
+        opacity: 1 !important;
+    }
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] svg {
+        fill: currentColor !important;
+        color: inherit !important;
     }
     section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] a:hover {
         background: rgba(255, 255, 255, .10);
         border-color: rgba(255, 255, 255, .15);
-        color: #fff;
+        color: #fff !important;
         transform: translateX(3px);
     }
     section[data-testid="stSidebar"] [class*="st-key-jr_nav_active_"] [data-testid="stPageLink"] a {
         background: linear-gradient(120deg, rgba(82, 167, 232, .28), rgba(200, 20, 56, .22));
         border-color: rgba(255, 255, 255, .24);
         box-shadow: 0 10px 28px rgba(0, 0, 0, .18);
-        color: #fff;
+        color: #fff !important;
+        opacity: 1 !important;
     }
     .jr-nav-label {
         margin: .8rem .4rem .45rem;
