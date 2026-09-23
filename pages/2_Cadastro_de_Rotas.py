@@ -10,6 +10,7 @@ from services.database import (
     replace_route_cities,
     save_route,
 )
+from ui.auth import render_account_sidebar, require_admin, require_auth
 from ui.spreadsheet import (
     LOGO_PATH,
     apply_spreadsheet_style,
@@ -20,7 +21,10 @@ from utils.city_normalizer import resolve_municipality_fields
 st.set_page_config(
     page_title="Cadastro de Rotas", page_icon=str(LOGO_PATH), layout="wide"
 )
+role = require_auth()
 apply_spreadsheet_style("routes")
+render_account_sidebar(role)
+require_admin(role)
 initialize_database()
 
 render_page_header(
@@ -93,9 +97,7 @@ with edit_tab:
                                 "preenche o código automaticamente."
                             )
                         ),
-                        "UF": st.column_config.TextColumn(
-                            default="MG", width="small"
-                        ),
+                        "UF": st.column_config.TextColumn(default="MG", width="small"),
                         "Código IBGE": st.column_config.TextColumn(
                             help="Código de 7 dígitos do município oficial."
                         ),
@@ -120,13 +122,9 @@ with edit_tab:
                         state = item.get("UF")
                         original_value = str(original).strip()
                         municipality_value = (
-                            ""
-                            if pd.isna(municipality)
-                            else str(municipality).strip()
+                            "" if pd.isna(municipality) else str(municipality).strip()
                         )
-                        state_value = (
-                            "MG" if pd.isna(state) else str(state).strip()
-                        )
+                        state_value = "MG" if pd.isna(state) else str(state).strip()
                         ibge_value = "" if pd.isna(ibge) else str(ibge).strip()
                         resolved_name, resolved_state, resolved_code = (
                             resolve_municipality_fields(
@@ -152,9 +150,7 @@ with edit_tab:
                     st.session_state.pop("weekly_holiday_results", None)
                     message = "Rota salva."
                     if auto_filled:
-                        message += (
-                            f" {auto_filled} código(s) IBGE preenchido(s) automaticamente."
-                        )
+                        message += f" {auto_filled} código(s) IBGE preenchido(s) automaticamente."
                     st.session_state.route_save_notice = {
                         "message": message,
                         "unresolved": sorted(set(unresolved)),

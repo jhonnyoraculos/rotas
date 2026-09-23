@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date, timedelta
-from time import time
 
 import pandas as pd
 import streamlit as st
@@ -10,13 +10,22 @@ from services.database import (
     connection_description,
     ensure_week_schedule,
     initialize_database,
+    invalidate_week_holiday_snapshot,
     list_routes,
+    load_week_holiday_snapshot,
     load_week_schedule,
     replace_schedule_day,
+    save_week_holiday_snapshot,
 )
 from services.excel_exporter import export_week_to_excel
 from services.excel_importer import auto_import_if_available
-from services.holidays import HolidayService, holiday_matches_for_display
+from services.holidays import (
+    HolidayService,
+    deserialize_week_holiday_results,
+    holiday_matches_for_display,
+    serialize_week_holiday_results,
+)
+from ui.auth import is_admin, render_account_sidebar, require_auth
 from ui.spreadsheet import (
     LOGO_PATH,
     apply_spreadsheet_style,
@@ -28,8 +37,12 @@ from ui.spreadsheet import (
 from utils.dates import business_week, monday_of, today_in_brazil, week_title
 from utils.route_parser import extract_route_code
 
-st.set_page_config(page_title="Escala de Rotas", page_icon=str(LOGO_PATH), layout="wide")
+st.set_page_config(
+    page_title="Escala de Rotas", page_icon=str(LOGO_PATH), layout="wide"
+)
+role = require_auth()
 apply_spreadsheet_style()
+render_account_sidebar(role)
 render_page_header(
     "Escala semanal de rotas",
     "Planejamento inteligente, feriados integrados e operação em uma única visão.",
@@ -148,8 +161,22 @@ schedule_signature = tuple(
     )
     for day, day_routes in schedule.items()
 )
-holiday_cache_key = (schedule_signature, int(time() // 900))
+schedule_digest = hashlib.sha256(repr(schedule_signature).encode("utf-8")).hexdigest()
+holiday_cache_key = (monday.isoformat(), schedule_digest)
+refresh_holidays = False
+if is_admin(role):
+    refresh_holidays = st.button(
+        "↻ Atualizar feriados desta semana",
+        help="Recalcula e substitui as informações salvas somente para esta semana.",
+    )
+if refresh_holidays:
+    invalidate_week_holiday_snapshot(monday)
+    st.session_state.pop("weekly_holiday_results", None)
+
 holiday_cache = st.session_state.get("weekly_holiday_results")
+holiday_snapshot = (
+    None if refresh_holidays else load_week_holiday_snapshot(monday, schedule_digest)
+)
 if (
     holiday_cache
     and holiday_cache["key"] == holiday_cache_key
@@ -158,31 +185,64 @@ if (
     matches = holiday_cache["matches"]
     city_matches = holiday_cache["city_matches"]
     holiday_warnings = holiday_cache["warnings"]
-else:
-    with st.spinner("Verificando feriados da semana..."):
-        holiday_service = HolidayService()
-        matches = holiday_service.match_week(schedule)
-        city_matches = holiday_service.match_week_cities(schedule)
-        holiday_warnings = set(holiday_service.warnings)
-    st.session_state.weekly_holiday_results = {
-        "key": holiday_cache_key,
-        "matches": matches,
-        "city_matches": city_matches,
-        "warnings": holiday_warnings,
-    }
+    holiday_source = "session"
+elif holiday_snapshot is not None:
+    try:
+        matches, city_matches, holiday_warnings = deserialize_week_holiday_results(
+            holiday_snapshot
+        )
+        holiday_source = "database"
+    except (KeyError, TypeError, ValueError):
+        holiday_snapshot = None
+
+if holiday_cache is None or holiday_cache.get("key") != holiday_cache_key:
+    if holiday_snapshot is not None:
+        st.session_state.weekly_holiday_results = {
+            "key": holiday_cache_key,
+            "matches": matches,
+            "city_matches": city_matches,
+            "warnings": holiday_warnings,
+        }
+    else:
+        holiday_source = "calculated"
+        with st.spinner("Verificando e salvando os feriados desta semana..."):
+            holiday_service = HolidayService()
+            matches = holiday_service.match_week(schedule)
+            city_matches = holiday_service.match_week_cities(schedule)
+            holiday_warnings = set(holiday_service.warnings)
+            save_week_holiday_snapshot(
+                monday,
+                schedule_digest,
+                serialize_week_holiday_results(matches, city_matches, holiday_warnings),
+            )
+        st.session_state.weekly_holiday_results = {
+            "key": holiday_cache_key,
+            "matches": matches,
+            "city_matches": city_matches,
+            "warnings": holiday_warnings,
+        }
+
+if holiday_source == "database":
+    st.caption("Feriados carregados do registro salvo desta semana.")
+elif holiday_source == "calculated":
+    st.caption("Feriados verificados e salvos para esta semana.")
 
 render_city_holiday_summary(city_matches)
 render_schedule_table(monday, schedule, matches)
 
 with st.container(key="schedule_actions"):
-    button_col, export_col = st.columns(2)
-    with button_col:
-        if st.button(
-            "Fechar edição" if st.session_state.get("editing") else "Editar escala",
-            width="stretch",
-        ):
-            st.session_state.editing = not st.session_state.get("editing", False)
-            st.rerun()
+    action_columns = st.columns(2) if is_admin(role) else st.columns(1)
+    if is_admin(role):
+        button_col, export_col = action_columns
+        with button_col:
+            if st.button(
+                "Fechar edição" if st.session_state.get("editing") else "Editar escala",
+                width="stretch",
+            ):
+                st.session_state.editing = not st.session_state.get("editing", False)
+                st.rerun()
+    else:
+        export_col = action_columns[0]
     with export_col:
         export_bytes = export_week_to_excel(monday, schedule, matches)
         st.download_button(
@@ -193,7 +253,7 @@ with st.container(key="schedule_actions"):
             width="stretch",
         )
 
-if st.session_state.get("editing"):
+if is_admin(role) and st.session_state.get("editing"):
     st.markdown("#### Editar escala")
     st.caption(
         "Digite ou cole o código (ex.: R.40) ou o nome completo. Linhas vazias são ignoradas; "
@@ -212,9 +272,7 @@ if st.session_state.get("editing"):
             width="stretch",
             key=f"schedule_editor_{monday.isoformat()}",
         )
-        save_schedule = st.form_submit_button(
-            "Salvar alterações", type="primary"
-        )
+        save_schedule = st.form_submit_button("Salvar alterações", type="primary")
     if save_schedule:
         routes_by_code = {route.code: route for route in routes}
         routes_by_label = {route.label.casefold(): route for route in routes}
@@ -254,17 +312,13 @@ if not display_matches:
 else:
     for match in display_matches:
         if match.holiday_type.casefold() == "nacional":
-            title = (
-                f"🔴 {match.date:%d/%m/%Y} — Todas as cidades — {match.name}"
-            )
+            title = f"🔴 {match.date:%d/%m/%Y} — Todas as cidades — {match.name}"
         else:
             title = (
                 f"🔴 {match.date:%d/%m/%Y} — {match.route_name} "
                 f"({match.route_code}) — {match.city}"
             )
-        with st.expander(
-            title
-        ):
+        with st.expander(title):
             st.write(f"**Cidade afetada:** {match.city}")
             st.write(f"**Feriado:** {match.name}")
             st.write(f"**Tipo:** {match.holiday_type}")

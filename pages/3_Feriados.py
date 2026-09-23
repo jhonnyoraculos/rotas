@@ -14,6 +14,7 @@ from services.database import (
     list_routes,
 )
 from services.holidays import clear_holiday_memory_cache
+from ui.auth import is_admin, render_account_sidebar, require_auth
 from ui.spreadsheet import (
     LOGO_PATH,
     apply_spreadsheet_style,
@@ -24,7 +25,9 @@ from utils.city_normalizer import normalize_text
 from utils.dates import today_in_brazil
 
 st.set_page_config(page_title="Feriados", page_icon=str(LOGO_PATH), layout="wide")
+role = require_auth()
 apply_spreadsheet_style("holidays")
+render_account_sidebar(role)
 initialize_database()
 
 render_page_header(
@@ -107,6 +110,10 @@ elif entries:
     st.info("Nenhum feriado corresponde aos filtros selecionados.")
 else:
     st.info("Ainda não há feriados armazenados para esse ano.")
+
+if not is_admin(role):
+    st.info("Modo visitante: cadastro e atualização de feriados estão desabilitados.")
+    st.stop()
 
 st.markdown("### Adicionar feriado manual")
 city_options: dict[str, object] = {}

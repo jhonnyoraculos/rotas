@@ -11,6 +11,7 @@ from services.database import (
     resolve_route_city,
 )
 from services.excel_importer import import_workbook
+from ui.auth import render_account_sidebar, require_admin, require_auth
 from ui.spreadsheet import (
     LOGO_PATH,
     apply_spreadsheet_style,
@@ -19,10 +20,11 @@ from ui.spreadsheet import (
 from utils.city_normalizer import fetch_state_municipalities
 from utils.dates import today_in_brazil
 
-st.set_page_config(
-    page_title="Configurações", page_icon=str(LOGO_PATH), layout="wide"
-)
+st.set_page_config(page_title="Configurações", page_icon=str(LOGO_PATH), layout="wide")
+role = require_auth()
 apply_spreadsheet_style("settings")
+render_account_sidebar(role)
+require_admin(role)
 initialize_database()
 
 render_page_header(

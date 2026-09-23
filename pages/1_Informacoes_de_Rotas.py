@@ -19,6 +19,7 @@ from services.database import (
     saved_route_matrix_columns,
 )
 from services.excel_importer import import_weekday_profiles
+from ui.auth import is_admin, render_account_sidebar, require_auth
 from ui.route_planner import render_route_planner
 from ui.spreadsheet import LOGO_PATH, apply_spreadsheet_style, render_page_header
 from utils.city_normalizer import normalize_text, resolve_municipality_fields
@@ -59,6 +60,7 @@ def _reset_planner_state(columns: dict[int, list[str]]) -> None:
     st.session_state.route_planner_draft = columns_to_board(columns)
     st.session_state.route_planner_source = _saved_signature(columns)
     st.session_state.route_planner_undo = []
+    st.session_state.route_planner_redo = []
     st.session_state.pop("route_planner_dialog", None)
 
 
@@ -79,6 +81,7 @@ def _apply_board_change(updated: dict) -> None:
     history = st.session_state.setdefault("route_planner_undo", [])
     history.append(clone_board(previous))
     del history[:-20]
+    st.session_state.route_planner_redo = []
     st.session_state.route_planner_draft = clone_board(updated)
 
 
@@ -437,7 +440,9 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
 
 
 st.set_page_config(page_title="Rotas", page_icon=str(LOGO_PATH), layout="wide")
+role = require_auth()
 apply_spreadsheet_style("route_info")
+render_account_sidebar(role)
 st.markdown(PLANNER_CSS, unsafe_allow_html=True)
 initialize_database()
 
@@ -477,12 +482,19 @@ dirty = board_signature(draft) != board_signature(saved_board)
 sync_value = f"{board_signature(draft)}|{board_signature(saved_board)}"
 sync_token = hashlib.sha1(sync_value.encode("utf-8")).hexdigest()
 
+planner_instructions = (
+    "<span><b>◇ Visitante</b> consulta em modo somente leitura</span>"
+    if not is_admin(role)
+    else (
+        "<span><b>⠿ Rota</b> arraste o card inteiro</span>"
+        "<span><b>● Cidade</b> mova ou reordene o nó</span>"
+        "<span>Arrastes não recarregam a página</span>"
+    )
+)
 st.markdown(
     '<div class="planner-help">'
-    "<span><b>⠿ Rota</b> arraste o card inteiro</span>"
-    "<span><b>● Cidade</b> mova ou reordene o nó</span>"
+    f"{planner_instructions}"
     "<span><b>!</b> condição especial</span>"
-    "<span>Arrastes não recarregam a página</span>"
     "<span>No celular, deslize os dias para o lado</span>"
     "</div>",
     unsafe_allow_html=True,
@@ -492,11 +504,17 @@ event = render_route_planner(
     draft,
     saved_board,
     can_server_undo=bool(st.session_state.get("route_planner_undo")),
+    can_server_redo=bool(st.session_state.get("route_planner_redo")),
     server_dirty=dirty,
+    read_only=not is_admin(role),
     sync_token=sync_token,
     key="weekly_route_blueprint",
 )
-if event and event.get("nonce") != st.session_state.get("route_planner_last_event"):
+if (
+    is_admin(role)
+    and event
+    and event.get("nonce") != st.session_state.get("route_planner_last_event")
+):
     st.session_state.route_planner_last_event = event.get("nonce")
     if event.get("type") == "save":
         try:
@@ -523,7 +541,18 @@ if event and event.get("nonce") != st.session_state.get("route_planner_last_even
     elif event.get("type") == "undo":
         history = st.session_state.get("route_planner_undo", [])
         if history:
+            redo = st.session_state.setdefault("route_planner_redo", [])
+            redo.append(clone_board(st.session_state.route_planner_draft))
+            del redo[:-20]
             st.session_state.route_planner_draft = history.pop()
+            st.rerun()
+    elif event.get("type") == "redo":
+        redo = st.session_state.get("route_planner_redo", [])
+        if redo:
+            history = st.session_state.setdefault("route_planner_undo", [])
+            history.append(clone_board(st.session_state.route_planner_draft))
+            del history[:-20]
+            st.session_state.route_planner_draft = redo.pop()
             st.rerun()
     elif event.get("type") == "action":
         try:
@@ -536,11 +565,14 @@ if event and event.get("nonce") != st.session_state.get("route_planner_last_even
         except ValueError as error:
             st.error(str(error))
 
-_render_active_dialog()
+if is_admin(role):
+    _render_active_dialog()
 
 with st.expander("Cadastro técnico de cidades e códigos IBGE"):
     st.caption(
-        "Ajuste vínculos municipais quando necessário. Esta seção continua usando o cadastro atual."
+        "Consulta dos vínculos municipais em modo somente leitura."
+        if not is_admin(role)
+        else "Ajuste vínculos municipais quando necessário. Esta seção continua usando o cadastro atual."
     )
     city_rows = list_city_registry()
     if not city_rows:
@@ -552,7 +584,7 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
             city_registry,
             hide_index=True,
             width="stretch",
-            disabled=["_normalized_city", "Pendente"],
+            disabled=(True if not is_admin(role) else ["_normalized_city", "Pendente"]),
             column_config={
                 "_normalized_city": None,
                 "Localidade original": st.column_config.TextColumn(width="medium"),
@@ -563,7 +595,7 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
             },
             key=f"route_city_registry_editor_{registry_version}",
         )
-        if st.button("Salvar cidades e códigos", type="primary"):
+        if is_admin(role) and st.button("Salvar cidades e códigos", type="primary"):
             try:
                 resolved_rows, auto_filled = _city_registry_rows(edited_cities)
                 save_city_registry(resolved_rows)

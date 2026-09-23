@@ -56,6 +56,74 @@ class CityHolidayMatch:
     routes: tuple[str, ...] = ()
 
 
+def serialize_week_holiday_results(
+    matches: Iterable[HolidayMatch],
+    city_matches: Iterable[CityHolidayMatch],
+    warnings: Iterable[str],
+) -> dict:
+    """Converte o resultado semanal para o formato JSON persistido no banco."""
+    return {
+        "matches": [
+            {
+                "date": item.date.isoformat(),
+                "route_id": item.route_id,
+                "route_code": item.route_code,
+                "route_name": item.route_name,
+                "city": item.city,
+                "name": item.name,
+                "holiday_type": item.holiday_type,
+                "source": item.source,
+            }
+            for item in matches
+        ],
+        "city_matches": [
+            {
+                "date": item.date.isoformat(),
+                "city": item.city,
+                "state": item.state,
+                "name": item.name,
+                "holiday_type": item.holiday_type,
+                "source": item.source,
+                "routes": list(item.routes),
+            }
+            for item in city_matches
+        ],
+        "warnings": sorted(set(warnings)),
+    }
+
+
+def deserialize_week_holiday_results(
+    payload: dict,
+) -> tuple[list[HolidayMatch], list[CityHolidayMatch], set[str]]:
+    """Restaura as estruturas usadas pela interface a partir do snapshot semanal."""
+    matches = [
+        HolidayMatch(
+            date=date.fromisoformat(item["date"]),
+            route_id=int(item["route_id"]),
+            route_code=str(item["route_code"]),
+            route_name=str(item["route_name"]),
+            city=str(item["city"]),
+            name=str(item["name"]),
+            holiday_type=str(item["holiday_type"]),
+            source=str(item["source"]),
+        )
+        for item in payload.get("matches", [])
+    ]
+    city_matches = [
+        CityHolidayMatch(
+            date=date.fromisoformat(item["date"]),
+            city=str(item["city"]),
+            state=str(item["state"]),
+            name=str(item["name"]),
+            holiday_type=str(item["holiday_type"]),
+            source=str(item["source"]),
+            routes=tuple(str(route) for route in item.get("routes", [])),
+        )
+        for item in payload.get("city_matches", [])
+    ]
+    return matches, city_matches, set(payload.get("warnings", []))
+
+
 def holiday_matches_for_display(
     matches: Iterable[HolidayMatch],
 ) -> list[HolidayMatch]:
@@ -497,9 +565,7 @@ class HolidayService:
                     if normalize_text(item.holiday_type) == "NACIONAL"
                     else "Minas Gerais"
                 )
-                self._append_city_match(
-                    matches, seen, day, city_label, state, item, ()
-                )
+                self._append_city_match(matches, seen, day, city_label, state, item, ())
 
             weekday_cities = (
                 self._weekday_cities_from_rows(weekday_city_rows, day.weekday())
@@ -551,9 +617,7 @@ class HolidayService:
                 None,
             )
             route_cities = (
-                weekday_profile.cities
-                if weekday_profile is not None
-                else route.cities
+                weekday_profile.cities if weekday_profile is not None else route.cities
             )
             fallback_label = getattr(
                 route,
@@ -602,9 +666,7 @@ class HolidayService:
         rows: list[dict], weekday: int
     ) -> list[tuple[str, str, str | None, tuple[str, ...]]]:
         route_has_weekday_profile = {
-            row["route_id"]
-            for row in rows
-            if row.get("weekday") == weekday
+            row["route_id"] for row in rows if row.get("weekday") == weekday
         }
         grouped: dict[tuple[str, str], dict] = {}
         for row in rows:

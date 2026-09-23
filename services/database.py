@@ -42,6 +42,7 @@ from utils.route_parser import (
 
 _SCHEMA_LOCK_KEY = 82726010422026
 _ROUTE_MATRIX_KEY = "route_weekday_matrix_columns"
+_WEEK_HOLIDAY_PREFIX = "weekly_holidays:"
 
 
 def _streamlit_secret(name: str) -> str | None:
@@ -152,9 +153,7 @@ def get_route(route_id: int) -> Route | None:
 
 def count_route_weekday_profiles() -> int:
     with session_scope() as session:
-        return int(
-            session.scalar(select(func.count(RouteWeekdayProfile.id))) or 0
-        )
+        return int(session.scalar(select(func.count(RouteWeekdayProfile.id))) or 0)
 
 
 def list_route_weekday_profiles(
@@ -346,9 +345,8 @@ def list_city_registry() -> list[dict]:
         if existing is None:
             cities[normalized] = row
             continue
-        if (
-            (not existing["ibge_code"] and row["ibge_code"])
-            or (existing["needs_review"] and not row["needs_review"])
+        if (not existing["ibge_code"] and row["ibge_code"]) or (
+            existing["needs_review"] and not row["needs_review"]
         ):
             cities[normalized] = row
     return sorted(cities.values(), key=lambda item: item["city_original"])
@@ -546,12 +544,83 @@ def saved_route_matrix_columns() -> dict[int, list[str]] | None:
         except (TypeError, json.JSONDecodeError):
             return None
     return {
-        weekday: [
-            _clean_matrix_cell(value)
-            for value in payload.get(str(weekday), [])
-        ]
+        weekday: [_clean_matrix_cell(value) for value in payload.get(str(weekday), [])]
         for weekday in range(5)
     }
+
+
+def load_week_holiday_snapshot(monday: date, schedule_signature: str) -> dict | None:
+    """Carrega o resultado persistido da semana quando a escala ainda é a mesma."""
+    key = f"{_WEEK_HOLIDAY_PREFIX}{monday.isoformat()}"
+    with session_scope() as session:
+        setting = session.get(AppSetting, key)
+        if setting is None or not setting.value:
+            return None
+        try:
+            payload = json.loads(setting.value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != 1
+        or payload.get("schedule_signature") != schedule_signature
+    ):
+        return None
+    return payload
+
+
+def save_week_holiday_snapshot(
+    monday: date,
+    schedule_signature: str,
+    results: dict,
+) -> None:
+    """Persiste os feriados calculados para reutilização entre sessões."""
+    key = f"{_WEEK_HOLIDAY_PREFIX}{monday.isoformat()}"
+    payload = {
+        "version": 1,
+        "schedule_signature": schedule_signature,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        **results,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False)
+    with session_scope() as session:
+        setting = session.get(AppSetting, key)
+        if setting is None:
+            session.add(AppSetting(key=key, value=encoded))
+        else:
+            setting.value = encoded
+
+
+def _invalidate_week_holiday_snapshots_in_session(
+    session: Session, year: int | None = None
+) -> None:
+    settings = list(
+        session.scalars(
+            select(AppSetting).where(AppSetting.key.like(f"{_WEEK_HOLIDAY_PREFIX}%"))
+        )
+    )
+    for setting in settings:
+        if year is None:
+            session.delete(setting)
+            continue
+        try:
+            monday = date.fromisoformat(setting.key.removeprefix(_WEEK_HOLIDAY_PREFIX))
+        except ValueError:
+            session.delete(setting)
+            continue
+        if any(day.year == year for day in business_week(monday)):
+            session.delete(setting)
+
+
+def invalidate_week_holiday_snapshots(year: int | None = None) -> None:
+    with session_scope() as session:
+        _invalidate_week_holiday_snapshots_in_session(session, year)
+
+
+def invalidate_week_holiday_snapshot(monday: date) -> None:
+    key = f"{_WEEK_HOLIDAY_PREFIX}{monday.isoformat()}"
+    with session_scope() as session:
+        session.execute(delete(AppSetting).where(AppSetting.key == key))
 
 
 def _apply_city_registry_labels_to_matrix(
@@ -629,9 +698,7 @@ def _weekday_blocks_from_columns(
             code = extract_route_code(value)
             if code:
                 name = strip_route_code(value) or code
-                route_item = routes.setdefault(
-                    code, {"name": name, "weekdays": {}}
-                )
+                route_item = routes.setdefault(code, {"name": name, "weekdays": {}})
                 if route_item["name"] == code and name != code:
                     route_item["name"] = name
                 if code not in schedule[weekday]:
@@ -648,11 +715,13 @@ def _weekday_blocks_from_columns(
             if normalized.startswith(("EXTRA BH", "COLETA ")):
                 current = None
                 continue
-            if _clean_matrix_cell(raw_value).startswith("!") or "CONDICAO" in normalized:
+            if (
+                _clean_matrix_cell(raw_value).startswith("!")
+                or "CONDICAO" in normalized
+            ):
                 continue
             if normalized and all(
-                normalize_text(existing) != normalized
-                for existing in current["cities"]
+                normalize_text(existing) != normalized for existing in current["cities"]
             ):
                 current["cities"].append(value)
         for code, block in blocks_by_code.items():
@@ -721,9 +790,7 @@ def _replace_weekday_profiles_in_session(
     for weekday in range(5):
         scheduled_codes = list(schedule.get(weekday, []))
         detail_codes = [
-            code
-            for code, item in routes.items()
-            if weekday in item.get("weekdays", {})
+            code for code, item in routes.items() if weekday in item.get("weekdays", {})
         ]
         ordered_codes = [*scheduled_codes]
         ordered_codes.extend(code for code in detail_codes if code not in ordered_codes)
@@ -777,9 +844,7 @@ def replace_route_weekday_profiles(
                 **item,
                 "cities": [_route_city_dict(city) for city in route.cities],
             }
-        _replace_weekday_profiles_in_session(
-            session, enriched, route_by_code, schedule
-        )
+        _replace_weekday_profiles_in_session(session, enriched, route_by_code, schedule)
 
 
 def replace_weekday_route_matrix(
@@ -878,9 +943,7 @@ def replace_weekday_route_matrix(
             }
 
         session.execute(delete(RouteWeekdayTemplate))
-        _replace_weekday_profiles_in_session(
-            session, enriched, route_by_code, schedule
-        )
+        _replace_weekday_profiles_in_session(session, enriched, route_by_code, schedule)
         for weekday, codes in schedule.items():
             for position, code in enumerate(codes):
                 route = route_by_code.get(code)
@@ -960,9 +1023,7 @@ def import_snapshot(
                         )
                     )
 
-        _replace_weekday_profiles_in_session(
-            session, routes, route_by_code, schedule
-        )
+        _replace_weekday_profiles_in_session(session, routes, route_by_code, schedule)
         session.execute(delete(RouteWeekdayTemplate))
         session.execute(delete(WeeklySchedule).where(WeeklySchedule.date.in_(days)))
         for weekday, codes in schedule.items():
@@ -1221,15 +1282,19 @@ def add_manual_holiday(
                     source="manual",
                 )
             )
+        _invalidate_week_holiday_snapshots_in_session(session, holiday_date.year)
 
 
 def delete_manual_holiday(holiday_id: int) -> None:
     with session_scope() as session:
+        existing = session.get(HolidayCache, holiday_id)
         session.execute(
             delete(HolidayCache).where(
                 HolidayCache.id == holiday_id, HolidayCache.source == "manual"
             )
         )
+        if existing is not None and existing.source == "manual":
+            _invalidate_week_holiday_snapshots_in_session(session, existing.year)
 
 
 def invalidate_holiday_sync(
@@ -1242,3 +1307,4 @@ def invalidate_holiday_sync(
         if year:
             statement = statement.where(HolidaySyncStatus.year == year)
         session.execute(statement)
+        _invalidate_week_holiday_snapshots_in_session(session, year)
