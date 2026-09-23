@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from pathlib import Path
@@ -35,20 +36,9 @@ from utils.route_planner import (
 DAY_LABELS = ("Segunda", "Terça", "Quarta", "Quinta", "Sexta")
 PLANNER_CSS = """
 <style>
-  .st-key-planner_status {
-    position: sticky; top: 3.35rem; z-index: 9;
-    margin: .25rem 0 .75rem; padding: .62rem .72rem;
-    border: 1px solid rgba(18,82,154,.16); border-radius: 14px;
-    background: rgba(248,252,255,.91); box-shadow: 0 10px 28px rgba(7,43,88,.10);
-    backdrop-filter: blur(18px);
-  }
-  .st-key-planner_status [data-testid="stHorizontalBlock"] {align-items:center; gap:.55rem;}
-  .st-key-planner_status p {margin:0; color:#536981; font-size:.78rem;}
-  .st-key-planner_status button {min-height:2.25rem; font-size:.78rem;}
   .planner-help {display:flex; flex-wrap:wrap; gap:.5rem; margin:-.25rem 0 .8rem;}
   .planner-help span {padding:.34rem .55rem; border:1px solid rgba(18,82,154,.12); border-radius:999px; color:#60748c; background:rgba(255,255,255,.62); font-size:.69rem;}
   .planner-help b {color:#165f9e;}
-  @media(max-width:760px){.st-key-planner_status{top:3rem}.st-key-planner_status [data-testid="stHorizontalBlock"]{flex-wrap:wrap}}
 </style>
 """
 
@@ -482,70 +472,69 @@ if saved_columns is None:
     saved_columns = _profiles_to_columns(list_route_weekday_profiles())
 _ensure_planner_state(saved_columns)
 draft = st.session_state.route_planner_draft
-dirty = board_signature(draft) != board_signature(columns_to_board(saved_columns))
-
-if dirty:
-    with st.container(key="planner_status"):
-        status_col, undo_col, discard_col, save_col = st.columns([4, 1, 1, 1.35])
-        status_col.markdown(
-            "● **Alterações não salvas** — revise o quadro antes de confirmar."
-        )
-        if undo_col.button(
-            "↶ Desfazer",
-            disabled=not bool(st.session_state.get("route_planner_undo")),
-            width="stretch",
-        ):
-            st.session_state.route_planner_draft = (
-                st.session_state.route_planner_undo.pop()
-            )
-            st.rerun()
-        if discard_col.button("Descartar", width="stretch"):
-            _reset_planner_state(saved_columns)
-            st.rerun()
-        if save_col.button("Salvar alterações", type="primary", width="stretch"):
-            try:
-                with st.spinner("Salvando o planejamento..."):
-                    replace_weekday_route_matrix(
-                        board_to_columns(draft),
-                        reference_monday=monday_of(today_in_brazil()),
-                    )
-                st.session_state.pop("weekly_holiday_results", None)
-                st.session_state.route_matrix_save_notice = "Planejamento salvo. Rotas, cidades e ordem semanal foram atualizadas."
-                st.session_state.route_city_registry_version = (
-                    st.session_state.get("route_city_registry_version", 0) + 1
-                )
-                st.session_state.pop("route_planner_draft", None)
-                st.rerun()
-            except (ValueError, IntegrityError) as error:
-                st.error(f"Não foi possível salvar o planejamento: {error}")
-else:
-    st.caption("Tudo salvo • arraste uma rota ou cidade para começar a organizar.")
+saved_board = columns_to_board(saved_columns)
+dirty = board_signature(draft) != board_signature(saved_board)
+sync_value = f"{board_signature(draft)}|{board_signature(saved_board)}"
+sync_token = hashlib.sha1(sync_value.encode("utf-8")).hexdigest()
 
 st.markdown(
     '<div class="planner-help">'
     "<span><b>⠿ Rota</b> arraste o card inteiro</span>"
     "<span><b>● Cidade</b> mova ou reordene o nó</span>"
     "<span><b>!</b> condição especial</span>"
+    "<span>Arrastes não recarregam a página</span>"
     "<span>No celular, deslize os dias para o lado</span>"
     "</div>",
     unsafe_allow_html=True,
 )
 
-event = render_route_planner(draft, key="weekly_route_blueprint")
+event = render_route_planner(
+    draft,
+    saved_board,
+    can_server_undo=bool(st.session_state.get("route_planner_undo")),
+    server_dirty=dirty,
+    sync_token=sync_token,
+    key="weekly_route_blueprint",
+)
 if event and event.get("nonce") != st.session_state.get("route_planner_last_event"):
     st.session_state.route_planner_last_event = event.get("nonce")
-    if event.get("type") == "board_changed":
+    if event.get("type") == "save":
         try:
-            _apply_board_change(event.get("board") or {})
+            submitted_board = event.get("board") or {}
+            with st.spinner("Salvando o planejamento..."):
+                replace_weekday_route_matrix(
+                    board_to_columns(submitted_board),
+                    reference_monday=monday_of(today_in_brazil()),
+                )
+            st.session_state.pop("weekly_holiday_results", None)
+            st.session_state.route_matrix_save_notice = (
+                "Planejamento salvo. Rotas, cidades e ordem semanal foram atualizadas."
+            )
+            st.session_state.route_city_registry_version = (
+                st.session_state.get("route_city_registry_version", 0) + 1
+            )
+            st.session_state.pop("route_planner_draft", None)
+            st.rerun()
+        except (ValueError, IntegrityError) as error:
+            st.error(f"Não foi possível salvar o planejamento: {error}")
+    elif event.get("type") == "discard":
+        _reset_planner_state(saved_columns)
+        st.rerun()
+    elif event.get("type") == "undo":
+        history = st.session_state.get("route_planner_undo", [])
+        if history:
+            st.session_state.route_planner_draft = history.pop()
+            st.rerun()
+    elif event.get("type") == "action":
+        try:
+            _apply_board_change(event.get("board") or draft)
+            st.session_state.route_planner_dialog = {
+                "action": event.get("action"),
+                "id": event.get("id"),
+            }
             st.rerun()
         except ValueError as error:
             st.error(str(error))
-    elif event.get("type") == "action":
-        st.session_state.route_planner_dialog = {
-            "action": event.get("action"),
-            "id": event.get("id"),
-        }
-        st.rerun()
 
 _render_active_dialog()
 

@@ -11,6 +11,22 @@ _route_planner = components.declare_component(
 )
 
 
-def render_route_planner(board: dict, *, key: str) -> dict | None:
+def render_route_planner(
+    board: dict,
+    saved_board: dict,
+    *,
+    can_server_undo: bool,
+    server_dirty: bool,
+    sync_token: str,
+    key: str,
+) -> dict | None:
     """Renderiza o quadro e devolve eventos de interação para o Streamlit."""
-    return _route_planner(board=board, key=key, default=None)
+    return _route_planner(
+        board=board,
+        saved_board=saved_board,
+        can_server_undo=can_server_undo,
+        server_dirty=server_dirty,
+        sync_token=sync_token,
+        key=key,
+        default=None,
+    )
