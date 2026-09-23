@@ -32,9 +32,10 @@ Crie `.streamlit/secrets.toml` (o arquivo já está ignorado pelo Git):
 DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "troque-por-uma-senha-forte"
+AUTH_SECRET = "troque-por-uma-chave-aleatoria-longa"
 ```
 
-`DATABASE_URL` é opcional no desenvolvimento: sem ela, a aplicação cria `data/rotas.db`. `ADMIN_USERNAME` e `ADMIN_PASSWORD` habilitam o acesso administrativo; sem essas duas configurações, o sistema continua disponível apenas no modo visitante. O provedor municipal padrão usa o dataset aberto `joaopbini/feriados-brasil` e não exige conta, token ou plano pago.
+`DATABASE_URL` é opcional no desenvolvimento: sem ela, a aplicação cria `data/rotas.db`. `ADMIN_USERNAME` e `ADMIN_PASSWORD` habilitam o acesso administrativo; sem essas duas configurações, o sistema continua disponível apenas no modo visitante. `AUTH_SECRET` assina a opção **Lembrar meu acesso**; use uma chave longa e privada. Se ela não for configurada, a assinatura é derivada das credenciais administrativas. O provedor municipal padrão usa o dataset aberto `joaopbini/feriados-brasil` e não exige conta, token ou plano pago.
 
 ## Importação inicial
 
@@ -90,6 +91,6 @@ Os avisos de licença estão em `THIRD_PARTY_NOTICES.md`.
 ## Deploy no Streamlit Community Cloud
 
 1. Publique o repositório sem `.streamlit/secrets.toml` e sem a planilha real, caso ela seja confidencial.
-2. Cadastre `DATABASE_URL`, `ADMIN_USERNAME` e `ADMIN_PASSWORD` na área de segredos do aplicativo.
+2. Cadastre `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` e `AUTH_SECRET` na área de segredos do aplicativo.
 3. Defina `app.py` como arquivo principal.
 4. Faça a primeira importação na página **Configurações**.

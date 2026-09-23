@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>html,body{margin:0;height:0;overflow:hidden;background:transparent}</style>
+</head>
+<body>
+<script>
+  const STORAGE_KEY = "jr_admin_session_v1";
+  let lastCommandId = null;
+
+  const send = (type, data = {}) => window.parent.postMessage(
+    {isStreamlitMessage: true, type, ...data}, "*"
+  );
+
+  function reply(commandId = null) {
+    let token = null;
+    try { token = window.localStorage.getItem(STORAGE_KEY); } catch (_error) {}
+    send("streamlit:setComponentValue", {
+      value: {status: "ready", token, command_id: commandId}
+    });
+    send("streamlit:setFrameHeight", {height: 0});
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "streamlit:render") return;
+    const args = event.data.args || {};
+    const commandId = args.command_id || null;
+
+    if (commandId && commandId !== lastCommandId) {
+      try {
+        if (args.command === "store" && args.token) {
+          window.localStorage.setItem(STORAGE_KEY, args.token);
+        } else if (args.command === "clear") {
+          window.localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (_error) {}
+      lastCommandId = commandId;
+    }
+    reply(commandId);
+  });
+
+  send("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>

@@ -58,7 +58,10 @@ SPREADSHEET_CSS = """
         box-shadow: 0 12px 32px rgba(0, 0, 0, .28);
     }
     section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {display: none;}
-    .jr-custom-nav a {
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] {
+        margin: 3px 0;
+    }
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] a {
         display: flex;
         align-items: center;
         gap: .7rem;
@@ -72,19 +75,23 @@ SPREADSHEET_CSS = """
         text-decoration: none;
         transition: background .22s ease, border-color .22s ease, transform .22s ease;
     }
-    .jr-custom-nav a:hover {
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] a p {
+        color: inherit;
+        font-size: inherit;
+        font-weight: inherit;
+    }
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_"] [data-testid="stPageLink"] a:hover {
         background: rgba(255, 255, 255, .10);
         border-color: rgba(255, 255, 255, .15);
         color: #fff;
         transform: translateX(3px);
     }
-    .jr-custom-nav a.active {
+    section[data-testid="stSidebar"] [class*="st-key-jr_nav_active_"] [data-testid="stPageLink"] a {
         background: linear-gradient(120deg, rgba(82, 167, 232, .28), rgba(200, 20, 56, .22));
         border-color: rgba(255, 255, 255, .24);
         box-shadow: 0 10px 28px rgba(0, 0, 0, .18);
         color: #fff;
     }
-    .jr-nav-icon {display: inline-grid; width: 1.2rem; place-items: center; font-size: 1rem;}
     .jr-nav-label {
         margin: .8rem .4rem .45rem;
         color: rgba(255, 255, 255, .48);
@@ -611,19 +618,29 @@ def apply_spreadsheet_style(active_page: str = "schedule") -> None:
         st.logo(str(LOGO_PATH), size="large", icon_image=str(LOGO_PATH))
     st.markdown(SPREADSHEET_CSS, unsafe_allow_html=True)
     links = (
-        ("schedule", "./", "▦", "Escala semanal"),
-        ("route_info", "./Informacoes_de_Rotas", "⌁", "Rotas"),
-        ("holidays", "./Feriados", "◈", "Feriados"),
-    )
-    nav_links = "".join(
-        f'<a class="{"active" if key == active_page else ""}" href="{href}" target="_self">'
-        f'<span class="jr-nav-icon">{icon}</span>{label}</a>'
-        for key, href, icon, label in links
+        ("schedule", "app.py", ":material/calendar_view_week:", "Escala semanal"),
+        (
+            "route_info",
+            "pages/1_Informacoes_de_Rotas.py",
+            ":material/route:",
+            "Rotas",
+        ),
+        ("holidays", "pages/3_Feriados.py", ":material/event:", "Feriados"),
     )
     with st.sidebar:
+        st.markdown('<div class="jr-nav-label">Operação</div>', unsafe_allow_html=True)
+        for key, page, icon, label in links:
+            container_key = (
+                f"jr_nav_active_{key}" if key == active_page else f"jr_nav_{key}"
+            )
+            with st.container(key=container_key):
+                st.page_link(
+                    page,
+                    label=label,
+                    icon=icon,
+                    use_container_width=True,
+                )
         st.markdown(
-            '<div class="jr-nav-label">Operação</div>'
-            f'<nav class="jr-custom-nav">{nav_links}</nav>'
             '<div class="jr-sidebar-signature">JR Ferragens &amp; Madeiras<br>'
             'Inteligência para transportes'
             '<span class="jr-sidebar-credit">Desenvolvido por Jhonatan S. Veiga</span></div>',

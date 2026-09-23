@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
+import json
 import os
+import secrets
+import time
 
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from ui.auth_storage import sync_auth_storage
+
 ROLE_KEY = "jr_access_role"
 ADMIN_ROLE = "admin"
 VIEWER_ROLE = "viewer"
+_STORAGE_ACTION_KEY = "jr_auth_storage_action"
+_REMEMBER_SECONDS = 30 * 24 * 60 * 60
 
 
 def _setting(name: str) -> str | None:
@@ -26,6 +35,104 @@ def _admin_credentials() -> tuple[str | None, str | None]:
     return _setting("ADMIN_USERNAME"), _setting("ADMIN_PASSWORD")
 
 
+def _urlsafe_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _urlsafe_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + ("=" * (-len(value) % 4)))
+
+
+def _remember_signing_key(username: str, password: str) -> bytes:
+    configured_secret = _setting("AUTH_SECRET")
+    if configured_secret:
+        return configured_secret.encode("utf-8")
+    return hashlib.sha256(
+        f"jr-rotas\0{username}\0{password}".encode()
+    ).digest()
+
+
+def _create_remember_token(
+    username: str, password: str, *, now: int | None = None
+) -> str:
+    issued_at = int(time.time()) if now is None else now
+    payload = {
+        "exp": issued_at + _REMEMBER_SECONDS,
+        "role": ADMIN_ROLE,
+        "sub": username,
+        "v": 1,
+    }
+    body = _urlsafe_encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signature = hmac.new(
+        _remember_signing_key(username, password), body.encode("ascii"), hashlib.sha256
+    ).digest()
+    return f"{body}.{_urlsafe_encode(signature)}"
+
+
+def _validate_remember_token(
+    token: str, username: str, password: str, *, now: int | None = None
+) -> bool:
+    try:
+        body, encoded_signature = token.split(".", 1)
+        expected_signature = hmac.new(
+            _remember_signing_key(username, password),
+            body.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(
+            _urlsafe_decode(encoded_signature), expected_signature
+        ):
+            return False
+        payload = json.loads(_urlsafe_decode(body).decode("utf-8"))
+        current_time = int(time.time()) if now is None else now
+        return (
+            payload.get("v") == 1
+            and payload.get("role") == ADMIN_ROLE
+            and payload.get("sub") == username
+            and int(payload.get("exp", 0)) > current_time
+        )
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+
+
+def _queue_storage_action(command: str, token: str | None = None) -> None:
+    st.session_state[_STORAGE_ACTION_KEY] = {
+        "command": command,
+        "token": token,
+        "command_id": secrets.token_urlsafe(12),
+    }
+
+
+def _sync_browser_session() -> None:
+    pending = st.session_state.get(_STORAGE_ACTION_KEY)
+    result = sync_auth_storage(
+        command=pending.get("command") if pending else None,
+        token=pending.get("token") if pending else None,
+        command_id=pending.get("command_id") if pending else None,
+    )
+
+    if pending:
+        if result.get("command_id") == pending.get("command_id"):
+            st.session_state.pop(_STORAGE_ACTION_KEY, None)
+        return
+
+    if current_role() or result.get("status") != "ready":
+        return
+
+    token = result.get("token")
+    admin_username, admin_password = _admin_credentials()
+    if (
+        isinstance(token, str)
+        and admin_username
+        and admin_password
+        and _validate_remember_token(token, admin_username, admin_password)
+    ):
+        st.session_state[ROLE_KEY] = ADMIN_ROLE
+        st.rerun()
+
+
 def current_role() -> str | None:
     role = st.session_state.get(ROLE_KEY)
     return role if role in {ADMIN_ROLE, VIEWER_ROLE} else None
@@ -37,6 +144,7 @@ def is_admin(role: str | None = None) -> bool:
 
 def require_auth() -> str:
     """Exige uma escolha de acesso e retorna o papel da sessão atual."""
+    _sync_browser_session()
     role = current_role()
     if role:
         return role
@@ -73,6 +181,10 @@ def require_auth() -> str:
         with st.form("admin_login_form"):
             username = st.text_input("Usuário")
             password = st.text_input("Senha", type="password")
+            remember_access = st.checkbox(
+                "Lembrar meu acesso por 30 dias",
+                help="Mantém este navegador conectado sem guardar sua senha.",
+            )
             submitted = st.form_submit_button(
                 "Entrar como administrador", width="stretch"
             )
@@ -87,6 +199,13 @@ def require_auth() -> str:
                 username.strip(), admin_username
             ) and hmac.compare_digest(password, admin_password):
                 st.session_state[ROLE_KEY] = ADMIN_ROLE
+                if remember_access:
+                    _queue_storage_action(
+                        "store",
+                        _create_remember_token(admin_username, admin_password),
+                    )
+                else:
+                    _queue_storage_action("clear")
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos.")
@@ -114,6 +233,7 @@ def render_account_sidebar(role: str) -> None:
             unsafe_allow_html=True,
         )
         if st.button("Sair", key="logout_session", width="stretch"):
+            _queue_storage_action("clear")
             st.session_state.pop(ROLE_KEY, None)
             for state_key in (
                 "editing",
