@@ -101,6 +101,12 @@ SPREADSHEET_CSS = """
         line-height: 1.5;
         border-top: 1px solid rgba(255, 255, 255, .10);
     }
+    .jr-sidebar-credit {
+        display: block;
+        margin-top: .55rem;
+        color: rgba(255, 255, 255, .58);
+        font-weight: 650;
+    }
     h1, h2, h3, h4 {color: var(--jr-ink); letter-spacing: -.025em;}
     p, label {color: #33465f;}
     .jr-hero {
@@ -619,7 +625,8 @@ def apply_spreadsheet_style(active_page: str = "schedule") -> None:
             '<div class="jr-nav-label">Operação</div>'
             f'<nav class="jr-custom-nav">{nav_links}</nav>'
             '<div class="jr-sidebar-signature">JR Ferragens &amp; Madeiras<br>'
-            "Inteligência para transportes</div>",
+            'Inteligência para transportes'
+            '<span class="jr-sidebar-credit">Desenvolvido por Jhonatan S. Veiga</span></div>',
             unsafe_allow_html=True,
         )
 
