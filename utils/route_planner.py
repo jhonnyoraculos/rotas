@@ -155,8 +155,39 @@ def board_to_columns(board: dict) -> dict[int, list[str]]:
 
 
 def board_signature(board: dict) -> str:
-    columns = board_to_columns(board)
-    return json.dumps(columns, ensure_ascii=False, sort_keys=True)
+    """Representa o quadro visual sem perder ocorrências repetidas ou sua ordem."""
+    days: list[dict] = []
+    for day in board.get("days", []):
+        items: list[dict] = []
+        for item in day.get("items", []):
+            if item.get("kind") == "route":
+                items.append(
+                    {
+                        "kind": "route",
+                        "code": extract_route_code(item.get("code")),
+                        "name": _clean(item.get("name")),
+                        "cities": [
+                            {
+                                "name": _clean(city.get("name"))
+                                .lstrip("!* ")
+                                .strip(),
+                                "condition": bool(city.get("condition")),
+                            }
+                            for city in item.get("cities", [])
+                            if isinstance(city, dict)
+                        ],
+                    }
+                )
+            elif item.get("kind") == "note":
+                items.append(
+                    {
+                        "kind": "note",
+                        "title": _clean(item.get("title")),
+                        "lines": [_clean(line) for line in item.get("lines", [])],
+                    }
+                )
+        days.append({"weekday": day.get("weekday"), "items": items})
+    return json.dumps(days, ensure_ascii=False, sort_keys=True)
 
 
 def clone_board(board: dict) -> dict:

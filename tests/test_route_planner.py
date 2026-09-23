@@ -1,4 +1,9 @@
-from utils.route_planner import board_to_columns, columns_to_board
+from utils.route_planner import (
+    board_signature,
+    board_to_columns,
+    clone_board,
+    columns_to_board,
+)
 
 
 def test_route_planner_roundtrip_preserves_routes_conditions_and_notes() -> None:
@@ -41,6 +46,17 @@ def test_route_planner_roundtrip_keeps_weekday_and_city_order() -> None:
     rebuilt = board_to_columns(board)
     assert rebuilt[0] == ["B (R.20)", "B1"]
     assert rebuilt[2] == ["A (R.10)", "A2", "A1"]
+
+
+def test_board_signature_detects_removing_one_duplicate_city() -> None:
+    board = columns_to_board(
+        {0: ["ITAÚNA (R.40)", "ITAÚNA", "AZURITA", "AZURITA", "JUATUBA"]}
+    )
+    updated = clone_board(board)
+    cities = updated["days"][0]["items"][0]["cities"]
+    del cities[2]
+
+    assert board_signature(updated) != board_signature(board)
 
 
 def test_route_planner_rejects_duplicate_route_in_same_day() -> None:
