@@ -15,6 +15,7 @@ from services.database import (
     list_city_registry,
     list_route_weekday_profiles,
     replace_weekday_route_matrix,
+    resolve_pending_city_codes,
     save_city_registry,
     saved_route_matrix_columns,
 )
@@ -22,7 +23,7 @@ from services.excel_importer import import_weekday_profiles
 from ui.auth import is_admin, render_account_sidebar, require_auth
 from ui.route_planner import render_route_planner
 from ui.spreadsheet import LOGO_PATH, apply_spreadsheet_style, render_page_header
-from utils.city_normalizer import normalize_text, resolve_municipality_fields
+from utils.city_normalizer import normalize_text
 from utils.dates import monday_of, today_in_brazil
 from utils.route_parser import extract_route_code
 from utils.route_planner import (
@@ -161,6 +162,17 @@ def _show_city_conflicts(conflicts: list[str]) -> None:
     )
 
 
+def _mark_city_codes_pending() -> None:
+    st.session_state.route_city_lookup_notice = True
+
+
+def _refresh_city_codes_notice() -> None:
+    if any(bool(item.get("needs_review")) for item in list_city_registry()):
+        _mark_city_codes_pending()
+    else:
+        st.session_state.pop("route_city_lookup_notice", None)
+
+
 @st.dialog("Nova rota", width="large")
 def _new_route_dialog() -> None:
     board = st.session_state.route_planner_draft
@@ -212,6 +224,8 @@ def _new_route_dialog() -> None:
         }
     )
     _apply_board_change(updated)
+    if cities:
+        _mark_city_codes_pending()
     _close_dialog()
 
 
@@ -286,6 +300,11 @@ def _edit_route_dialog(route_id: str) -> None:
                 if candidate.get("id") == route_id:
                     candidate["cities"] = cities
     _apply_board_change(updated)
+    previous_names = {
+        normalize_text(city.get("name")) for city in route.get("cities", [])
+    }
+    if any(normalize_text(city.get("name")) not in previous_names for city in cities):
+        _mark_city_codes_pending()
     _close_dialog()
 
 
@@ -326,6 +345,7 @@ def _add_city_dialog(route_id: str) -> None:
     assert updated_found is not None
     updated_found[1]["cities"].extend(additions)
     _apply_board_change(updated)
+    _mark_city_codes_pending()
     _close_dialog()
 
 
@@ -364,6 +384,8 @@ def _edit_city_dialog(city_id: str) -> None:
     updated_found[2]["name"] = clean_name
     updated_found[2]["condition"] = condition
     _apply_board_change(updated)
+    if normalize_text(clean_name) != normalize_text(city.get("name")):
+        _mark_city_codes_pending()
     _close_dialog()
 
 
@@ -468,9 +490,8 @@ def _city_registry_dataframe(rows: list[dict]) -> pd.DataFrame:
     )
 
 
-def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
+def _city_registry_rows(dataframe: pd.DataFrame) -> list[dict]:
     rows: list[dict] = []
-    auto_filled = 0
     for item in dataframe.to_dict("records"):
         original = _clean_editor_value(item.get("Localidade original"))
         if not original:
@@ -478,21 +499,16 @@ def _city_registry_rows(dataframe: pd.DataFrame) -> tuple[list[dict], int]:
         municipality = _clean_editor_value(item.get("Município oficial"))
         state = _clean_editor_value(item.get("UF"), "MG") or "MG"
         ibge = _clean_editor_value(item.get("Código IBGE"))
-        resolved_name, resolved_state, resolved_code = resolve_municipality_fields(
-            original, municipality, state, ibge
-        )
-        if not ibge and resolved_code:
-            auto_filled += 1
         rows.append(
             {
                 "normalized_city": item.get("_normalized_city"),
                 "city_original": original,
-                "municipality_name": resolved_name,
-                "state": resolved_state,
-                "ibge_code": resolved_code,
+                "municipality_name": municipality,
+                "state": state,
+                "ibge_code": ibge,
             }
         )
-    return rows, auto_filled
+    return rows
 
 
 st.set_page_config(page_title="Rotas", page_icon=str(LOGO_PATH), layout="wide")
@@ -527,6 +543,11 @@ if count_route_weekday_profiles() == 0:
 save_notice = st.session_state.pop("route_matrix_save_notice", None)
 if save_notice:
     st.success(save_notice)
+if st.session_state.get("route_city_lookup_notice"):
+    st.warning(
+        "Cidade nova adicionada. Salve as alterações e depois use "
+        "‘Pesquisar códigos pendentes’ no cadastro IBGE."
+    )
 
 saved_columns = saved_route_matrix_columns()
 if saved_columns is None:
@@ -580,6 +601,7 @@ if (
                     board_to_columns(submitted_board),
                     reference_monday=monday_of(today_in_brazil()),
                 )
+                _refresh_city_codes_notice()
             st.session_state.pop("weekly_holiday_results", None)
             st.session_state.route_matrix_save_notice = (
                 "Planejamento salvo. Rotas, cidades e ordem semanal foram atualizadas."
@@ -593,6 +615,7 @@ if (
             st.error(f"Não foi possível salvar o planejamento: {error}")
     elif event.get("type") == "discard":
         _reset_planner_state(saved_columns)
+        st.session_state.pop("route_city_lookup_notice", None)
         st.rerun()
     elif event.get("type") == "undo":
         history = st.session_state.get("route_planner_undo", [])
@@ -634,6 +657,33 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
     if not city_rows:
         st.info("Salve o planejamento para carregar as cidades aqui.")
     else:
+        lookup_result = st.session_state.pop("route_city_lookup_result", None)
+        if lookup_result:
+            resolved_names = lookup_result.get("resolved", [])
+            unresolved_names = lookup_result.get("unresolved", [])
+            lookup_errors = lookup_result.get("errors", [])
+            if resolved_names:
+                st.success(
+                    f"{len(resolved_names)} código(s) IBGE encontrado(s) e salvo(s)."
+                )
+            if unresolved_names:
+                st.warning(
+                    "Não foi possível localizar: "
+                    + ", ".join(dict.fromkeys(unresolved_names))
+                )
+            if lookup_errors:
+                st.error("Falha na consulta ao IBGE: " + " | ".join(lookup_errors))
+
+        pending_count = sum(bool(item.get("needs_review")) for item in city_rows)
+        if is_admin(role):
+            if pending_count:
+                st.warning(
+                    f"{pending_count} cidade(s) aguardando código IBGE. "
+                    "A pesquisa consultará somente estas pendências."
+                )
+            else:
+                st.success("Todos os códigos IBGE estão atualizados.")
+
         city_registry = _city_registry_dataframe(city_rows)
         registry_version = st.session_state.get("route_city_registry_version", 0)
         edited_cities = st.data_editor(
@@ -651,18 +701,29 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
             },
             key=f"route_city_registry_editor_{registry_version}",
         )
-        if is_admin(role) and st.button("Salvar cidades e códigos", type="primary"):
-            try:
-                resolved_rows, auto_filled = _city_registry_rows(edited_cities)
-                save_city_registry(resolved_rows)
-                st.session_state.pop("weekly_holiday_results", None)
-                message = "Cidades e códigos IBGE salvos."
-                if auto_filled:
-                    message += (
-                        f" {auto_filled} código(s) preenchido(s) automaticamente."
+        if is_admin(role):
+            save_col, search_col = st.columns(2)
+            if save_col.button("Salvar cidades e códigos", type="primary"):
+                try:
+                    save_city_registry(_city_registry_rows(edited_cities))
+                    _refresh_city_codes_notice()
+                    st.session_state.pop("weekly_holiday_results", None)
+                    st.session_state.route_matrix_save_notice = (
+                        "Cidades e códigos IBGE salvos."
                     )
-                st.session_state.route_matrix_save_notice = message
+                    st.session_state.route_city_registry_version = registry_version + 1
+                    st.rerun()
+                except (ValueError, IntegrityError) as error:
+                    st.error(f"Não foi possível salvar as cidades: {error}")
+            if search_col.button(
+                "Pesquisar códigos pendentes",
+                disabled=pending_count == 0,
+                help="Consulta apenas cidades marcadas como pendentes.",
+            ):
+                with st.spinner("Consultando somente as cidades pendentes..."):
+                    result = resolve_pending_city_codes()
+                st.session_state.route_city_lookup_result = result
+                st.session_state.pop("route_city_lookup_notice", None)
+                st.session_state.pop("weekly_holiday_results", None)
                 st.session_state.route_city_registry_version = registry_version + 1
                 st.rerun()
-            except (ValueError, IntegrityError) as error:
-                st.error(f"Não foi possível salvar as cidades: {error}")

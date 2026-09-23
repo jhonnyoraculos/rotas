@@ -376,3 +376,87 @@ def test_city_registry_save_merges_accented_legacy_duplicates(
             session.scalars(select(RouteCity).where(RouteCity.route_id == route.id))
         )
         assert len(route_rows) == 1
+
+
+def test_new_matrix_cities_stay_pending_until_manual_lookup(
+    monkeypatch, tmp_path
+) -> None:
+    url = f"sqlite:///{tmp_path / 'pending-city-lookup.db'}"
+    database.initialize_database(url)
+    original_session_scope = database.session_scope
+    monkeypatch.setattr(
+        database,
+        "session_scope",
+        lambda: original_session_scope(url),
+    )
+    monkeypatch.setattr(
+        database,
+        "fetch_state_municipalities",
+        lambda _state: (_ for _ in ()).throw(
+            AssertionError("A gravação não deve consultar o IBGE")
+        ),
+    )
+
+    database.replace_weekday_route_matrix(
+        {0: ["ITAUNA (R.40)", "ITAUNA", "AZURITA"]}
+    )
+
+    registry = database.list_city_registry()
+    assert {row["city_original"] for row in registry} == {"ITAUNA", "AZURITA"}
+    assert all(row["needs_review"] for row in registry)
+    assert all(not row["ibge_code"] for row in registry)
+
+
+def test_pending_lookup_searches_only_pending_and_reports_not_found(
+    monkeypatch, tmp_path
+) -> None:
+    url = f"sqlite:///{tmp_path / 'resolve-pending-cities.db'}"
+    database.initialize_database(url)
+    original_session_scope = database.session_scope
+    monkeypatch.setattr(
+        database,
+        "session_scope",
+        lambda: original_session_scope(url),
+    )
+    database.replace_weekday_route_matrix(
+        {
+            0: [
+                "ITAUNA (R.40)",
+                "ITAUNA",
+                "AZURITA",
+                "LOCAL DESCONHECIDO",
+            ]
+        }
+    )
+    registry = database.list_city_registry()
+    itauna = next(row for row in registry if row["city_original"] == "ITAUNA")
+    database.save_city_registry(
+        [
+            {
+                **itauna,
+                "municipality_name": "Itaúna",
+                "ibge_code": "3133808",
+            }
+        ]
+    )
+    calls: list[str] = []
+
+    def municipalities(state: str) -> tuple[Municipality, ...]:
+        calls.append(state)
+        return (Municipality("Azurita", "MG", "3199999"),)
+
+    monkeypatch.setattr(database, "fetch_state_municipalities", municipalities)
+
+    result = database.resolve_pending_city_codes()
+
+    assert result["searched"] == 2
+    assert result["resolved"] == ["AZURITA"]
+    assert result["unresolved"] == ["LOCAL DESCONHECIDO"]
+    assert calls == ["MG"]
+    updated = database.list_city_registry()
+    assert next(row for row in updated if row["city_original"] == "AZURITA")[
+        "ibge_code"
+    ] == "3199999"
+    assert next(row for row in updated if row["city_original"] == "ITAUNA")[
+        "ibge_code"
+    ] == "3133808"

@@ -490,6 +490,78 @@ def save_city_registry(rows: Sequence[dict]) -> None:
                         needs_review,
                     )
         _apply_city_registry_labels_to_matrix(session, matrix_label_replacements)
+        _invalidate_week_holiday_snapshots_in_session(session)
+
+
+def resolve_pending_city_codes() -> dict[str, object]:
+    """Pesquisa somente cidades pendentes e atualiza as correspondências exatas."""
+    pending = [
+        row
+        for row in list_city_registry()
+        if row.get("needs_review")
+        or not row.get("municipality_name")
+        or not row.get("ibge_code")
+    ]
+    resolved_names: list[str] = []
+    unresolved_names: list[str] = []
+    errors: list[str] = []
+    if not pending:
+        return {
+            "searched": 0,
+            "resolved": resolved_names,
+            "unresolved": unresolved_names,
+            "errors": errors,
+        }
+
+    municipalities_by_state: dict[str, tuple[Municipality, ...]] = {}
+    failed_states: set[str] = set()
+    for state in sorted(
+        {str(row.get("state") or "MG").strip().upper()[:2] or "MG" for row in pending}
+    ):
+        try:
+            municipalities_by_state[state] = fetch_state_municipalities(state)
+        except Exception as error:  # noqa: BLE001 - serviço externo pode falhar
+            failed_states.add(state)
+            errors.append(f"{state}: {error}")
+
+    updates: list[dict] = []
+    for row in pending:
+        state = str(row.get("state") or "MG").strip().upper()[:2] or "MG"
+        municipality = None
+        if state not in failed_states:
+            candidates = (
+                row.get("municipality_name"),
+                row.get("city_original"),
+            )
+            for candidate in candidates:
+                if not str(candidate or "").strip():
+                    continue
+                municipality = identify_municipality(
+                    str(candidate), state, municipalities_by_state[state]
+                )
+                if municipality is not None:
+                    break
+        if municipality is None:
+            unresolved_names.append(str(row.get("city_original") or ""))
+            continue
+        updates.append(
+            {
+                **row,
+                "municipality_name": municipality.name,
+                "state": municipality.state,
+                "ibge_code": municipality.ibge_code,
+            }
+        )
+        resolved_names.append(str(row.get("city_original") or municipality.name))
+
+    if updates:
+        save_city_registry(updates)
+    return {
+        "searched": len(pending),
+        "resolved": resolved_names,
+        "unresolved": unresolved_names,
+        "errors": errors,
+    }
 
 
 def _route_city_dict(city: RouteCity) -> dict:
@@ -673,6 +745,14 @@ def _resolve_matrix_city(
             "ibge_code": existing.get("ibge_code"),
             "needs_review": existing.get("needs_review", True),
         }
+    if municipalities is None:
+        return {
+            "city_original": original,
+            "municipality_name": None,
+            "state": state,
+            "ibge_code": None,
+            "needs_review": True,
+        }
     municipality = identify_municipality(original, state, municipalities)
     return {
         "city_original": original,
@@ -854,10 +934,9 @@ def replace_weekday_route_matrix(
 ) -> None:
     parsed_routes, schedule = _weekday_blocks_from_columns(columns)
     normalized_state = state.strip().upper()[:2] or "MG"
-    try:
-        municipalities = fetch_state_municipalities(normalized_state)
-    except Exception:  # noqa: BLE001 - a consulta ao IBGE pode estar indisponivel
-        municipalities = None
+    # Cidades novas entram como pendentes. A consulta ao IBGE é feita somente
+    # pela ação explícita do administrador na tela de rotas.
+    municipalities = None
 
     with session_scope() as session:
         _save_route_matrix_columns(session, columns)
@@ -901,7 +980,16 @@ def replace_weekday_route_matrix(
             route_city = _resolve_matrix_city(
                 route.name, normalized_state, existing_by_name, municipalities
             )
-            if route_city.get("ibge_code"):
+            profile_city_names = {
+                normalize_text(city)
+                for profile in item.get("weekdays", {}).values()
+                for city in profile.get("cities", [])
+            }
+            route_name_is_city = normalize_text(route.name) in profile_city_names or any(
+                not profile.get("cities")
+                for profile in item.get("weekdays", {}).values()
+            )
+            if route_city.get("ibge_code") or route_name_is_city:
                 global_rows.append(route_city)
                 global_seen.add(normalize_text(route_city["city_original"]))
 
