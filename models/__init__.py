@@ -3,6 +3,7 @@
 from models.entities import (
     AppSetting,
     Base,
+    CityRegistry,
     HolidayCache,
     HolidaySyncStatus,
     Route,
@@ -16,6 +17,7 @@ from models.entities import (
 __all__ = [
     "AppSetting",
     "Base",
+    "CityRegistry",
     "HolidayCache",
     "HolidaySyncStatus",
     "Route",

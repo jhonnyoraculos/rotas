@@ -18,6 +18,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 from models import (
     AppSetting,
     Base,
+    CityRegistry,
     HolidayCache,
     HolidaySyncStatus,
     Route,
@@ -271,6 +272,8 @@ def replace_route_cities(route_id: int, cities: Sequence[dict]) -> None:
         route = session.get(Route, route_id)
         if route is None:
             raise ValueError("Rota não encontrada.")
+        _backfill_city_registry(session)
+        _upsert_city_registry_rows(session, cities)
         session.execute(delete(RouteCity).where(RouteCity.route_id == route_id))
         seen: set[str] = set()
         for item in cities:
@@ -323,33 +326,112 @@ def resolve_route_city(
         item.state = state.upper()
         item.ibge_code = str(ibge_code)
         item.needs_review = False
+        _upsert_city_registry_rows(session, [_city_registry_row(item)])
+
+
+def _city_registry_row(city: RouteCity | RouteWeekdayCity | CityRegistry) -> dict:
+    return {
+        "city_original": city.city_original,
+        "municipality_name": city.municipality_name,
+        "state": city.state,
+        "ibge_code": city.ibge_code,
+        "needs_review": city.needs_review,
+    }
+
+
+def _upsert_city_registry_rows(session: Session, rows: Sequence[dict]) -> None:
+    """Guarda vínculos IBGE sem depender da cidade continuar em uma rota."""
+    prepared_rows: dict[str, dict] = {}
+    for item in rows:
+        original = " ".join(str(item.get("city_original") or "").split()).strip()
+        normalized = normalize_text(original)
+        if not normalized:
+            continue
+        municipality = (
+            " ".join(str(item.get("municipality_name") or "").split()).strip()
+            or None
+        )
+        state = str(item.get("state") or "MG").strip().upper()[:2] or "MG"
+        ibge_code = str(item.get("ibge_code") or "").strip() or None
+        needs_review = bool(item.get("needs_review", not bool(ibge_code)))
+        prepared = {
+            "original": original,
+            "municipality": municipality,
+            "state": state,
+            "ibge_code": ibge_code,
+            "needs_review": needs_review,
+        }
+        existing_prepared = prepared_rows.get(normalized)
+        if existing_prepared is None or (
+            not existing_prepared["ibge_code"] and ibge_code
+        ):
+            prepared_rows[normalized] = prepared
+
+    for normalized, prepared in prepared_rows.items():
+        original = prepared["original"]
+        municipality = prepared["municipality"]
+        state = prepared["state"]
+        ibge_code = prepared["ibge_code"]
+        needs_review = prepared["needs_review"]
+        record = session.scalar(
+            select(CityRegistry).where(CityRegistry.normalized_city == normalized)
+        )
+        if record is None:
+            session.add(
+                CityRegistry(
+                    city_original=original,
+                    municipality_name=municipality,
+                    normalized_city=normalized,
+                    state=state,
+                    ibge_code=ibge_code,
+                    needs_review=needs_review,
+                )
+            )
+            continue
+        # Dados confirmados nunca são trocados por uma inserção pendente.
+        if not record.ibge_code or ibge_code:
+            record.municipality_name = municipality or record.municipality_name
+            record.state = state
+            record.ibge_code = ibge_code or record.ibge_code
+            record.needs_review = needs_review if ibge_code else record.needs_review
+
+
+def _backfill_city_registry(session: Session) -> None:
+    _upsert_city_registry_rows(
+        session,
+        [
+            *(_city_registry_row(city) for city in session.scalars(select(RouteCity))),
+            *(
+                _city_registry_row(city)
+                for city in session.scalars(select(RouteWeekdayCity))
+            ),
+        ],
+    )
 
 
 def list_city_registry() -> list[dict]:
-    cities: dict[str, dict] = {}
     with session_scope() as session:
-        route_cities = list(session.scalars(select(RouteCity)))
-        weekday_cities = list(session.scalars(select(RouteWeekdayCity)))
-    for city in [*route_cities, *weekday_cities]:
-        normalized = normalize_text(city.normalized_city or city.city_original)
-        if not normalized:
-            continue
-        existing = cities.get(normalized)
+        _backfill_city_registry(session)
+        records = list(session.scalars(select(CityRegistry).order_by(CityRegistry.city_original)))
+
+    # Um mesmo município pode aparecer com grafias antigas. Exiba uma linha por
+    # código confirmado, mantendo pendências distintas para que possam ser buscadas.
+    cities: dict[str, dict] = {}
+    for city in records:
         row = {
-            "normalized_city": normalized,
+            "normalized_city": city.normalized_city,
             "city_original": city.city_original,
             "municipality_name": city.municipality_name or "",
             "state": city.state or "MG",
             "ibge_code": city.ibge_code or "",
             "needs_review": city.needs_review,
         }
-        if existing is None:
-            cities[normalized] = row
-            continue
-        if (not existing["ibge_code"] and row["ibge_code"]) or (
+        key = f"ibge:{row['ibge_code']}" if row["ibge_code"] else f"name:{city.normalized_city}"
+        existing = cities.get(key)
+        if existing is None or (
             existing["needs_review"] and not row["needs_review"]
         ):
-            cities[normalized] = row
+            cities[key] = row
     return sorted(cities.values(), key=lambda item: item["city_original"])
 
 
@@ -490,6 +572,18 @@ def save_city_registry(rows: Sequence[dict]) -> None:
                         ibge_code,
                         needs_review,
                     )
+                _upsert_city_registry_rows(
+                    session,
+                    [
+                        {
+                            "city_original": original,
+                            "municipality_name": municipality,
+                            "state": state,
+                            "ibge_code": ibge_code,
+                            "needs_review": needs_review,
+                        }
+                    ],
+                )
         _apply_city_registry_labels_to_matrix(session, matrix_label_replacements)
         _invalidate_week_holiday_snapshots_in_session(session)
 
@@ -866,6 +960,13 @@ def _replace_weekday_profiles_in_session(
     route_by_code: dict[str, Route],
     schedule: dict[int, list[str]],
 ) -> None:
+    _upsert_city_registry_rows(
+        session,
+        [
+            _city_registry_row(city)
+            for city in session.scalars(select(RouteWeekdayCity))
+        ],
+    )
     session.execute(delete(RouteWeekdayCity))
     session.execute(delete(RouteWeekdayProfile))
     for weekday in range(5):
@@ -912,6 +1013,7 @@ def replace_route_weekday_profiles(
     routes: dict[str, dict], schedule: dict[int, list[str]]
 ) -> None:
     with session_scope() as session:
+        _backfill_city_registry(session)
         existing_routes = list(
             session.scalars(select(Route).options(selectinload(Route.cities))).unique()
         )
@@ -941,6 +1043,14 @@ def replace_weekday_route_matrix(
 
     with session_scope() as session:
         _save_route_matrix_columns(session, columns)
+        _backfill_city_registry(session)
+        registry_by_name: dict[str, dict] = {}
+        for city in session.scalars(select(CityRegistry)):
+            city_row = _city_registry_row(city)
+            for value in (city.city_original, city.municipality_name):
+                normalized = normalize_text(value)
+                if normalized:
+                    registry_by_name.setdefault(normalized, city_row)
         existing_routes = list(
             session.scalars(select(Route).options(selectinload(Route.cities))).unique()
         )
@@ -969,6 +1079,7 @@ def replace_weekday_route_matrix(
             if route is None:
                 continue
             existing_by_name: dict[str, dict] = {}
+            existing_by_name.update(registry_by_name)
             for city in route.cities:
                 city_row = _route_city_dict(city)
                 for value in (city.city_original, city.municipality_name):
@@ -1013,6 +1124,7 @@ def replace_weekday_route_matrix(
                     "cities": [row["city_original"] for row in rows],
                 }
             session.execute(delete(RouteCity).where(RouteCity.route_id == route.id))
+            _upsert_city_registry_rows(session, global_rows)
             for row in global_rows:
                 session.add(
                     RouteCity(
@@ -1097,6 +1209,7 @@ def import_snapshot(
             session.execute(delete(HolidayCache))
             session.execute(delete(HolidaySyncStatus))
             session.execute(delete(AppSetting))
+            session.execute(delete(CityRegistry))
 
         route_by_code: dict[str, Route] = {}
         for code, item in routes.items():
@@ -1137,6 +1250,14 @@ def import_snapshot(
                         )
                     )
 
+        _upsert_city_registry_rows(
+            session,
+            [
+                city
+                for route in routes.values()
+                for city in route.get("cities", [])
+            ],
+        )
         _replace_weekday_profiles_in_session(session, routes, route_by_code, schedule)
         session.execute(delete(RouteWeekdayTemplate))
         session.execute(delete(WeeklySchedule).where(WeeklySchedule.date.in_(days)))

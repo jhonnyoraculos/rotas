@@ -76,6 +76,25 @@ class RouteCity(Base):
         return self.municipality_name or self.city_original
 
 
+class CityRegistry(Base):
+    """Cadastro técnico que sobrevive à remoção da cidade de uma rota."""
+
+    __tablename__ = "city_registry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    city_original: Mapped[str] = mapped_column(String(200))
+    municipality_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    normalized_city: Mapped[str] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    state: Mapped[str] = mapped_column(String(2), default="MG")
+    ibge_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
 class RouteWeekdayTemplate(Base):
     __tablename__ = "route_weekday_template"
     __table_args__ = (
