@@ -43,6 +43,7 @@ from utils.route_parser import (
 _SCHEMA_LOCK_KEY = 82726010422026
 _ROUTE_MATRIX_KEY = "route_weekday_matrix_columns"
 _WEEK_HOLIDAY_PREFIX = "weekly_holidays:"
+_CANONICAL_WORKBOOK_KEY = "canonical_workbook_sha256"
 
 
 def _streamlit_secret(name: str) -> str | None:
@@ -1066,12 +1067,37 @@ def replace_weekday_route_matrix(
                 setting.value = "matrix"
 
 
+def canonical_workbook_signature() -> str | None:
+    """Retorna a versão da planilha oficial já aplicada ao banco."""
+    with session_scope() as session:
+        setting = session.get(AppSetting, _CANONICAL_WORKBOOK_KEY)
+        return setting.value if setting else None
+
+
 def import_snapshot(
-    routes: dict[str, dict], schedule: dict[int, list[str]], monday: date
+    routes: dict[str, dict],
+    schedule: dict[int, list[str]],
+    monday: date,
+    *,
+    replace_existing: bool = False,
+    source_signature: str | None = None,
 ) -> None:
-    """Mescla rotas e substitui o modelo semanal e a escala da semana importada."""
+    """Importa a planilha, podendo substituir a base operacional inteira."""
     days = business_week(monday)
     with session_scope() as session:
+        if replace_existing:
+            # Exclusão explícita dos filhos para funcionar também no SQLite sem
+            # cascata de chaves estrangeiras habilitada.
+            session.execute(delete(WeeklySchedule))
+            session.execute(delete(RouteWeekdayCity))
+            session.execute(delete(RouteWeekdayProfile))
+            session.execute(delete(RouteWeekdayTemplate))
+            session.execute(delete(RouteCity))
+            session.execute(delete(Route))
+            session.execute(delete(HolidayCache))
+            session.execute(delete(HolidaySyncStatus))
+            session.execute(delete(AppSetting))
+
         route_by_code: dict[str, Route] = {}
         for code, item in routes.items():
             route = session.scalar(select(Route).where(Route.code == code))
@@ -1135,6 +1161,13 @@ def import_snapshot(
             session.add(AppSetting(key=key, value="excel_import"))
         else:
             setting.value = "excel_import"
+        if source_signature:
+            session.add(
+                AppSetting(
+                    key=_CANONICAL_WORKBOOK_KEY,
+                    value=source_signature,
+                )
+            )
 
 
 def ensure_week_schedule(monday: date) -> None:

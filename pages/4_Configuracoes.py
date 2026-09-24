@@ -42,14 +42,18 @@ columns[3].metric("Feriados em cache", stats["feriados_cache"])
 
 st.markdown("### Importar ROTAS_2026.xlsx")
 st.caption(
-    "A importação mescla as rotas e substitui o modelo semanal e a semana atual. "
-    "O banco passa a ser a fonte principal após a operação."
+    "Esta ação substitui integralmente as rotas, cidades, escala e cache de "
+    "feriados atuais pelo conteúdo da planilha."
 )
 uploaded = st.file_uploader("Arquivo Excel", type=["xlsx", "xlsm"])
 if uploaded is not None and st.button("Analisar e importar", type="primary"):
     try:
         with st.spinner("Analisando abas, rotas e municípios..."):
-            analysis = import_workbook(uploaded, reference_date=today_in_brazil())
+            analysis = import_workbook(
+                uploaded,
+                reference_date=today_in_brazil(),
+                replace_existing=True,
+            )
         st.session_state.pop("weekly_holiday_results", None)
         st.success("Planilha importada.")
         st.code("\n".join(analysis.summary_lines()), language="text")

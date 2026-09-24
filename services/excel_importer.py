@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -323,15 +324,57 @@ def import_weekday_profiles(
 
 
 def import_workbook(
-    source: str | Path | BinaryIO, reference_date: date | None = None
+    source: str | Path | BinaryIO,
+    reference_date: date | None = None,
+    *,
+    replace_existing: bool = False,
+    source_signature: str | None = None,
 ) -> WorkbookAnalysis:
     from services.database import import_snapshot
 
     analysis = analyze_workbook(source)
     routes = build_import_snapshot(analysis)
     monday = monday_of(reference_date or today_in_brazil())
-    import_snapshot(routes, analysis.schedule, monday)
+    import_snapshot(
+        routes,
+        analysis.schedule,
+        monday,
+        replace_existing=replace_existing,
+        source_signature=source_signature,
+    )
     return analysis
+
+
+def _canonical_workbook_path() -> Path | None:
+    return next(
+        (
+            candidate
+            for candidate in (Path("data/ROTAS_2026.xlsx"), Path("ROTAS_2026.xlsx"))
+            if candidate.exists()
+        ),
+        None,
+    )
+
+
+def _workbook_signature(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def sync_canonical_workbook_if_changed() -> WorkbookAnalysis | None:
+    """Aplica uma planilha oficial apenas quando a versão do arquivo muda."""
+    from services.database import canonical_workbook_signature
+
+    workbook = _canonical_workbook_path()
+    if workbook is None:
+        return None
+    signature = _workbook_signature(workbook)
+    if canonical_workbook_signature() == signature:
+        return None
+    return import_workbook(
+        workbook,
+        replace_existing=True,
+        source_signature=signature,
+    )
 
 
 def auto_import_if_available(

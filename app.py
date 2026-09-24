@@ -16,7 +16,7 @@ from services.database import (
     save_week_holiday_snapshot,
 )
 from services.excel_exporter import export_week_to_excel
-from services.excel_importer import auto_import_if_available
+from services.excel_importer import sync_canonical_workbook_if_changed
 from services.holidays import (
     HolidayService,
     deserialize_week_holiday_results,
@@ -50,7 +50,7 @@ render_page_header(
 @st.cache_resource(show_spinner=False)
 def bootstrap_application():
     initialize_database()
-    return auto_import_if_available()
+    return sync_canonical_workbook_if_changed()
 
 
 try:
@@ -60,7 +60,7 @@ except Exception as error:  # noqa: BLE001 - limite de apresentação da aplica�
     st.stop()
 
 if imported and not st.session_state.get("import_notice_seen"):
-    st.success("ROTAS_2026.xlsx importado automaticamente na primeira execução.")
+    st.success("A versão atual de ROTAS_2026.xlsx foi aplicada ao planejamento.")
     st.session_state.import_notice_seen = True
 
 if "week_monday" not in st.session_state:

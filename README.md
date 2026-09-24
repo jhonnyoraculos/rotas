@@ -46,7 +46,7 @@ data/ROTAS_2026.xlsx
 ROTAS_2026.xlsx
 ```
 
-Quando o banco ainda não contém rotas, a primeira abertura importa automaticamente o primeiro arquivo encontrado. Também é possível enviar outra versão pela página **Configurações**.
+Ao publicar uma nova versão de `ROTAS_2026.xlsx`, a aplicação identifica a alteração e substitui uma única vez a base operacional anterior por essa planilha. Depois da sincronização, as alterações feitas no sistema continuam no banco e não são reimportadas a cada recarga. Também é possível enviar outra versão pela página **Configurações**; essa ação também substitui integralmente a base atual.
 
 Para validar somente o parser e imprimir abas, contagens e exemplos de `rota → cidades`:
 
