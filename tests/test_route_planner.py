@@ -3,6 +3,7 @@ from utils.route_planner import (
     board_to_columns,
     clone_board,
     columns_to_board,
+    deduplicate_board_cities,
 )
 
 
@@ -104,6 +105,28 @@ def test_route_planner_allows_same_city_on_different_days() -> None:
 
     assert rebuilt[0][-1] == "AZURITA"
     assert rebuilt[1][-1] == "AZURITA"
+
+
+def test_deduplicate_board_cities_keeps_first_city_in_the_day() -> None:
+    board = columns_to_board(
+        {
+            0: [
+                "ITAÚNA (R.40)",
+                "AZURITA",
+                "PARÁ DE MINAS (R.41)",
+                "AZURITA",
+            ]
+        }
+    )
+
+    cleaned, removed = deduplicate_board_cities(board)
+
+    assert removed == ["AZURITA"]
+    assert board_to_columns(cleaned)[0] == [
+        "ITAÚNA (R.40)",
+        "AZURITA",
+        "PARÁ DE MINAS (R.41)",
+    ]
 
 
 def test_route_planner_rejects_duplicate_route_in_same_day() -> None:

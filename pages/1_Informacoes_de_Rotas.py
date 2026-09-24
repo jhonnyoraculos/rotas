@@ -10,6 +10,7 @@ import streamlit as st
 from sqlalchemy.exc import IntegrityError
 
 from services.database import (
+    connection_description,
     count_route_weekday_profiles,
     initialize_database,
     list_city_registry,
@@ -31,6 +32,7 @@ from utils.route_planner import (
     board_to_columns,
     clone_board,
     columns_to_board,
+    deduplicate_board_cities,
     find_city,
     find_route,
 )
@@ -517,6 +519,12 @@ apply_spreadsheet_style("route_info")
 render_account_sidebar(role)
 st.markdown(PLANNER_CSS, unsafe_allow_html=True)
 initialize_database()
+if is_admin(role) and connection_description().startswith("SQLite"):
+    st.warning(
+        "Banco local ativo. Para que alterações não sejam perdidas após "
+        "reinícios ou atualizações no Streamlit Cloud, configure DATABASE_URL "
+        "com PostgreSQL/Neon nos segredos do aplicativo."
+    )
 
 render_page_header(
     "Rotas",
@@ -596,16 +604,26 @@ if (
     if event.get("type") == "save":
         try:
             submitted_board = event.get("board") or {}
+            cleaned_board, removed_duplicates = deduplicate_board_cities(submitted_board)
             with st.spinner("Salvando o planejamento..."):
                 replace_weekday_route_matrix(
-                    board_to_columns(submitted_board),
+                    board_to_columns(cleaned_board),
                     reference_monday=monday_of(today_in_brazil()),
                 )
                 _refresh_city_codes_notice()
             st.session_state.pop("weekly_holiday_results", None)
-            st.session_state.route_matrix_save_notice = (
+            save_message = (
                 "Planejamento salvo. Rotas, cidades e ordem semanal foram atualizadas."
             )
+            if removed_duplicates:
+                duplicate_names = ", ".join(dict.fromkeys(removed_duplicates[:4]))
+                remaining = len(removed_duplicates) - len(removed_duplicates[:4])
+                suffix = f" e mais {remaining}" if remaining else ""
+                save_message += (
+                    f" {len(removed_duplicates)} duplicidade(s) legada(s) foram "
+                    f"removidas automaticamente: {duplicate_names}{suffix}."
+                )
+            st.session_state.route_matrix_save_notice = save_message
             st.session_state.route_city_registry_version = (
                 st.session_state.get("route_city_registry_version", 0) + 1
             )

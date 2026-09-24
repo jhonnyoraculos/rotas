@@ -205,6 +205,30 @@ def board_signature(board: dict) -> str:
     return json.dumps(days, ensure_ascii=False, sort_keys=True)
 
 
+def deduplicate_board_cities(board: dict) -> tuple[dict, list[str]]:
+    """Mantém a primeira ocorrência de cada cidade em cada dia."""
+    cleaned = copy.deepcopy(board)
+    removed: list[str] = []
+    for day in cleaned.get("days", []):
+        seen_cities: set[str] = set()
+        for item in day.get("items", []):
+            if item.get("kind") != "route":
+                continue
+            kept_cities: list[dict] = []
+            for city in item.get("cities", []):
+                if not isinstance(city, dict):
+                    continue
+                normalized = normalize_text(city.get("name"))
+                if normalized and normalized in seen_cities:
+                    removed.append(_clean(city.get("name")))
+                    continue
+                if normalized:
+                    seen_cities.add(normalized)
+                kept_cities.append(city)
+            item["cities"] = kept_cities
+    return cleaned, removed
+
+
 def clone_board(board: dict) -> dict:
     return copy.deepcopy(board)
 
