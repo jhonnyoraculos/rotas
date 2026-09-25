@@ -573,6 +573,7 @@ planner_instructions = (
     else (
         "<span><b>⠿ Rota</b> arraste o card inteiro</span>"
         "<span><b>● Cidade</b> mova ou reordene o nó</span>"
+        "<span><b>⧉ Copiar</b> use o ícone e cole no destino</span>"
         "<span>Arrastes não recarregam a página</span>"
     )
 )
