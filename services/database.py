@@ -367,26 +367,45 @@ def _upsert_city_registry_rows(session: Session, rows: Sequence[dict]) -> None:
         ):
             prepared_rows[normalized] = prepared
 
+    if not prepared_rows:
+        return
+    existing_records = {
+        record.normalized_city: record
+        for record in session.scalars(
+            select(CityRegistry).where(
+                CityRegistry.normalized_city.in_(prepared_rows)
+            )
+        )
+    }
+    # A sessão trabalha sem autoflush. Inclua registros recém-criados na mesma
+    # transação para não consultar/inserir a mesma cidade duas vezes.
+    existing_records.update(
+        {
+            record.normalized_city: record
+            for record in session.new
+            if isinstance(record, CityRegistry)
+            and record.normalized_city in prepared_rows
+        }
+    )
+
     for normalized, prepared in prepared_rows.items():
         original = prepared["original"]
         municipality = prepared["municipality"]
         state = prepared["state"]
         ibge_code = prepared["ibge_code"]
         needs_review = prepared["needs_review"]
-        record = session.scalar(
-            select(CityRegistry).where(CityRegistry.normalized_city == normalized)
-        )
+        record = existing_records.get(normalized)
         if record is None:
-            session.add(
-                CityRegistry(
-                    city_original=original,
-                    municipality_name=municipality,
-                    normalized_city=normalized,
-                    state=state,
-                    ibge_code=ibge_code,
-                    needs_review=needs_review,
-                )
+            record = CityRegistry(
+                city_original=original,
+                municipality_name=municipality,
+                normalized_city=normalized,
+                state=state,
+                ibge_code=ibge_code,
+                needs_review=needs_review,
             )
+            session.add(record)
+            existing_records[normalized] = record
             continue
         # Dados confirmados nunca são trocados por uma inserção pendente.
         if not record.ibge_code or ibge_code:
@@ -890,11 +909,9 @@ def _weekday_blocks_from_columns(
             if normalized.startswith(("EXTRA BH", "COLETA ")):
                 current = None
                 continue
-            if (
-                _clean_matrix_cell(raw_value).startswith("!")
-                or "CONDICAO" in normalized
-            ):
-                continue
+            # Condição especial continua sendo uma cidade/localidade da rota.
+            # O marcador "!" é visual e já foi removido por _matrix_cell_value.
+            # Descartá-la aqui fazia essas cidades sumirem após salvar.
             if normalized and all(
                 normalize_text(existing) != normalized for existing in current["cities"]
             ):
@@ -991,13 +1008,11 @@ def _replace_weekday_profiles_in_session(
                 position=position,
             )
             session.add(profile)
-            session.flush()
             for city_position, city in enumerate(
                 _weekday_city_rows(route_item, profile_item)
             ):
-                session.add(
+                profile.cities.append(
                     RouteWeekdayCity(
-                        profile_id=profile.id,
                         city_original=city["city_original"],
                         municipality_name=city.get("municipality_name"),
                         normalized_city=normalize_text(city["city_original"]),

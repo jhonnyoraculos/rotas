@@ -135,7 +135,7 @@ def test_route_matrix_save_updates_profiles_and_current_week(
         for profile in monday_r40.weekday_profiles
         if profile.weekday == 0
         for city in profile.cities
-    ] == ["ITAUNA", "MATEUS LEME"]
+    ] == ["ITAUNA", "SAO ROQUE DE MINAS CONDICAO", "MATEUS LEME"]
     assert [
         city.city_original
         for profile in tuesday_r40.weekday_profiles
