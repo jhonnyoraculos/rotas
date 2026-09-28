@@ -7,6 +7,7 @@ from openpyxl import Workbook
 from services.excel_importer import analyze_workbook, build_import_snapshot
 from utils.city_normalizer import (
     Municipality,
+    identify_municipality,
     normalize_text,
     resolve_municipality_fields,
 )
@@ -116,7 +117,7 @@ def test_missing_ibge_code_is_filled_from_official_municipality() -> None:
     assert result == ("São Sebastião do Oeste", "MG", "3164605")
 
 
-def test_ibge_code_is_not_guessed_for_a_different_name() -> None:
+def test_missing_connective_is_matched_when_the_municipality_is_unique() -> None:
     municipalities = (
         Municipality("São Sebastião do Oeste", "MG", "3164605"),
     )
@@ -129,7 +130,31 @@ def test_ibge_code_is_not_guessed_for_a_different_name() -> None:
         municipalities,
     )
 
-    assert result == ("São Sebastião Oeste", "MG", "")
+    assert result == ("São Sebastião do Oeste", "MG", "3164605")
+
+
+def test_municipality_lookup_ignores_operational_text_and_small_typo() -> None:
+    municipalities = (
+        Municipality("Divinópolis", "MG", "3122306"),
+        Municipality("Itaúna", "MG", "3133808"),
+    )
+
+    marked = identify_municipality(
+        "CIDADE: DIVINOPOLIS - CONDIÇÃO / MG", "MG", municipalities
+    )
+    typo = identify_municipality("ENTREGA DIVINOPOLIZ", "MG", municipalities)
+
+    assert marked == municipalities[0]
+    assert typo == municipalities[0]
+
+
+def test_municipality_lookup_keeps_ambiguous_short_name_pending() -> None:
+    municipalities = (
+        Municipality("São João del Rei", "MG", "3162500"),
+        Municipality("São João da Lagoa", "MG", "3162252"),
+    )
+
+    assert identify_municipality("SÃO JOÃO", "MG", municipalities) is None
 
 
 def test_missing_ibge_code_falls_back_to_original_city() -> None:
