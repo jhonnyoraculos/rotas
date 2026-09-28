@@ -460,3 +460,39 @@ def test_pending_lookup_searches_only_pending_and_reports_not_found(
     assert next(row for row in updated if row["city_original"] == "ITAUNA")[
         "ibge_code"
     ] == "3133808"
+
+
+def test_saving_full_registry_keeps_the_code_just_edited(monkeypatch, tmp_path) -> None:
+    url = f"sqlite:///{tmp_path / 'save-full-city-registry.db'}"
+    database.initialize_database(url)
+    original_session_scope = database.session_scope
+    monkeypatch.setattr(
+        database,
+        "session_scope",
+        lambda: original_session_scope(url),
+    )
+    database.replace_weekday_route_matrix(
+        {0: ["ITAUNA (R.40)", "ITAUNA", "AZURITA"]}
+    )
+
+    rows = database.list_city_registry()
+    edited_rows = [
+        {
+            **row,
+            "municipality_name": "Azurita",
+            "state": "MG",
+            "ibge_code": "3199999",
+        }
+        if row["city_original"] == "AZURITA"
+        else row
+        for row in rows
+    ]
+    database.save_city_registry(edited_rows)
+
+    saved = database.list_city_registry()
+    assert next(row for row in saved if row["city_original"] == "AZURITA")[
+        "ibge_code"
+    ] == "3199999"
+    assert next(row for row in saved if row["city_original"] == "ITAUNA")[
+        "ibge_code"
+    ] == ""

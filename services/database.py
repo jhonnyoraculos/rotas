@@ -523,6 +523,18 @@ def _merge_or_update_city_registry_records(
 
 def save_city_registry(rows: Sequence[dict]) -> None:
     with session_scope() as session:
+        _backfill_city_registry(session)
+        registry_by_normalized = {
+            record.normalized_city: record
+            for record in session.scalars(select(CityRegistry))
+        }
+        registry_by_normalized.update(
+            {
+                record.normalized_city: record
+                for record in session.new
+                if isinstance(record, CityRegistry)
+            }
+        )
         matrix_label_replacements: dict[str, str] = {}
         prepared_rows: dict[str, dict] = {}
         for item in rows:
@@ -542,6 +554,15 @@ def save_city_registry(rows: Sequence[dict]) -> None:
                 municipality = original or None
             needs_review = not bool(ibge_code and municipality)
             new_normalized = normalize_text(original)
+            current = registry_by_normalized.get(normalized)
+            if current is not None and (
+                current.city_original == original
+                and (current.municipality_name or None) == municipality
+                and (current.state or "MG") == state
+                and (current.ibge_code or None) == ibge_code
+                and current.needs_review == needs_review
+            ):
+                continue
             matrix_label_replacements[normalized] = original
             merge_key = f"ibge:{ibge_code}" if ibge_code else f"name:{new_normalized}"
             prepared = prepared_rows.get(merge_key)
@@ -568,6 +589,8 @@ def save_city_registry(rows: Sequence[dict]) -> None:
                         "needs_review": needs_review,
                     }
                 )
+        if not prepared_rows:
+            return
         with session.no_autoflush:
             for prepared in prepared_rows.values():
                 original = prepared["original"]

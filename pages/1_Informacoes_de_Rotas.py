@@ -705,12 +705,10 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
 
         city_registry = _city_registry_dataframe(city_rows)
         registry_version = st.session_state.get("route_city_registry_version", 0)
-        edited_cities = st.data_editor(
-            city_registry,
-            hide_index=True,
-            width="stretch",
-            disabled=(True if not is_admin(role) else ["_normalized_city", "Pendente"]),
-            column_config={
+        editor_options = {
+            "hide_index": True,
+            "width": "stretch",
+            "column_config": {
                 "_normalized_city": None,
                 "Localidade original": st.column_config.TextColumn(width="medium"),
                 "Município oficial": st.column_config.TextColumn(width="medium"),
@@ -718,11 +716,29 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
                 "Código IBGE": st.column_config.TextColumn(width="small"),
                 "Pendente": st.column_config.CheckboxColumn(width="small"),
             },
-            key=f"route_city_registry_editor_{registry_version}",
-        )
+            "key": f"route_city_registry_editor_{registry_version}",
+        }
         if is_admin(role):
-            save_col, search_col = st.columns(2)
-            if save_col.button("Salvar cidades e códigos", type="primary"):
+            # O formulário envia os valores ainda em edição junto do clique de
+            # salvar; sem ele o navegador podia reenviar a grade anterior.
+            with st.form(f"route_city_registry_form_{registry_version}"):
+                edited_cities = st.data_editor(
+                    city_registry,
+                    disabled=["_normalized_city", "Pendente"],
+                    **editor_options,
+                )
+                save_col, search_col = st.columns(2)
+                with save_col:
+                    save_codes = st.form_submit_button(
+                        "Salvar cidades e códigos", type="primary"
+                    )
+                with search_col:
+                    search_codes = st.form_submit_button(
+                        "Pesquisar códigos pendentes",
+                        disabled=pending_count == 0,
+                        help="Consulta apenas cidades marcadas como pendentes.",
+                    )
+            if save_codes:
                 try:
                     save_city_registry(_city_registry_rows(edited_cities))
                     _refresh_city_codes_notice()
@@ -734,11 +750,7 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
                     st.rerun()
                 except (ValueError, IntegrityError) as error:
                     st.error(f"Não foi possível salvar as cidades: {error}")
-            if search_col.button(
-                "Pesquisar códigos pendentes",
-                disabled=pending_count == 0,
-                help="Consulta apenas cidades marcadas como pendentes.",
-            ):
+            if search_codes:
                 with st.spinner("Consultando somente as cidades pendentes..."):
                     result = resolve_pending_city_codes()
                 st.session_state.route_city_lookup_result = result
@@ -746,3 +758,5 @@ with st.expander("Cadastro técnico de cidades e códigos IBGE"):
                 st.session_state.pop("weekly_holiday_results", None)
                 st.session_state.route_city_registry_version = registry_version + 1
                 st.rerun()
+        else:
+            st.data_editor(city_registry, disabled=True, **editor_options)
